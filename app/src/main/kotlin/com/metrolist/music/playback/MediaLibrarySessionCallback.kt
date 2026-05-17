@@ -70,6 +70,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.guava.future
 import kotlinx.coroutines.plus
 import javax.inject.Inject
+import com.metrolist.music.automotive.AlbumArtContentProvider
 
 class MediaLibrarySessionCallback
 @Inject
@@ -101,7 +102,7 @@ constructor(
                     .setTitle(title)
                     .setSubtitle(artists.joinToString(", ") { it.name })
                     .setArtist(artists.joinToString(", ") { it.name })
-                    .setArtworkUri(thumbnail?.toUri())
+                    .setArtworkUri(thumbnail?.toUri()?.let { AlbumArtContentProvider.mapUri(it) })
                     .setIsPlayable(true)
                     .setIsBrowsable(false)
                     .setMediaType(MediaMetadata.MEDIA_TYPE_MUSIC)
@@ -127,7 +128,7 @@ constructor(
                     .setTitle(title)
                     .setSubtitle(subtitle)
                     .setArtist(subtitle)
-                    .setArtworkUri(artworkUrl?.toUri())
+                    .setArtworkUri(artworkUrl?.toUri()?.let { AlbumArtContentProvider.mapUri(it) })
                     .setIsPlayable(false)
                     .setIsBrowsable(true)
                     .setMediaType(mediaType)
@@ -691,7 +692,7 @@ constructor(
                                         .setTitle(songItem.title)
                                         .setSubtitle(songItem.artists.joinToString(", ") { it.name })
                                         .setArtist(songItem.artists.joinToString(", ") { it.name })
-                                        .setArtworkUri(songItem.thumbnail.toUri())
+                                        .setArtworkUri(songItem.thumbnail.toUri().let { AlbumArtContentProvider.mapUri(it) })
                                         .setIsPlayable(true)
                                         .setIsBrowsable(true)
                                         .setMediaType(MediaMetadata.MEDIA_TYPE_MUSIC)
@@ -1028,7 +1029,7 @@ constructor(
                     .setTitle(song.title)
                     .setSubtitle(artists.joinToString { it.name })
                     .setArtist(artists.joinToString { it.name })
-                    .setArtworkUri(song.thumbnailUrl?.toUri())
+                    .setArtworkUri(song.thumbnailUrl?.toUri()?.let { AlbumArtContentProvider.mapUri(it) })
                     .setIsPlayable(isPlayable)
                     .setIsBrowsable(isBrowsable)
                     .setMediaType(MediaMetadata.MEDIA_TYPE_MUSIC)
