@@ -192,6 +192,12 @@
         </provider>
 
         <provider
+            android:name=".automotive.AlbumArtContentProvider"
+            android:authorities="${applicationId}.albumart"
+            android:exported="true"
+            android:grantUriPermissions="true" />
+
+        <provider
             android:name="com.dpi.DensityScaler"
             android:authorities="${applicationId}.com.dpi.DensityScaler"
             android:enabled="true"

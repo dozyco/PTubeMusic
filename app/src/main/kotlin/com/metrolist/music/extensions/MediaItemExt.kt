@@ -14,6 +14,7 @@ import com.metrolist.music.db.entities.Song
 import com.metrolist.music.models.MediaMetadata
 import com.metrolist.music.models.toMediaMetadata
 import com.metrolist.music.ui.utils.resize
+import com.metrolist.music.automotive.AlbumArtContentProvider
 
 val MediaItem.metadata: MediaMetadata?
     get() = localConfiguration?.tag as? MediaMetadata
@@ -52,7 +53,7 @@ fun SongItem.toMediaItem() = MediaItem.Builder()
             .setTitle(title)
             .setSubtitle(artists.joinToString { it.name })
             .setArtist(artists.joinToString { it.name })
-            .setArtworkUri(thumbnail.resize(1080, 1080).toUri())
+            .setArtworkUri(AlbumArtContentProvider.mapUri(thumbnail.resize(1080, 1080).toUri()))
             .setAlbumTitle(album?.name)
             .setAlbumArtist(artists.firstOrNull()?.name)
             .setDisplayTitle(title)
