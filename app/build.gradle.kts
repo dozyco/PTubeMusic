@@ -179,7 +179,7 @@ android {
             }
             isDebuggable = true
             if (appNameOverride == null) {
-                resValue("string", "app_name", "Metrolist Debug")
+                resValue("string", "app_name", "PTubeMusic")
             }
             signingConfig =
                 if (workflowDebugKeystoreFile != null) {
@@ -354,6 +354,8 @@ dependencies {
     implementation(libs.ucrop)
 
     implementation(libs.shimmer)
+
+    implementation("androidx.compose.material:material-icons-extended:1.7.0")
 
     implementation(libs.media3)
     implementation(libs.media3.session)

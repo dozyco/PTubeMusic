@@ -1,0 +1,30 @@
+[33mf0018c58a[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mautomotive[m[33m, [m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m, [m[1;32mmain[m[33m)[m fix(playlist): fix remote playlist reordering sync bug
+[33m2666fa29a[m[33m ([m[1;31morigin/dev[m[33m)[m Update proguard-rules.pro
+[33m0b9a24598[m feat(ui): optimize image resolution and quality across components
+[33mb6bd3bef3[m fix: targetAlpha calculation for LyricsLine
+[33mf8c7bff30[m Revert PR #3517: Remove uploaded tracks playback support
+[33mb8b1646a7[m fix(ui): fix artist banner resizing and letterboxing
+[33ma951c9eb7[m Chore: Bump MetrolistExtractor version to v5.0.0
+[33m39fb23f15[m[33m ([m[1;31morigin/fix/lt-again[m[33m)[m fix: listen together errors again
+[33m6f3dfab45[m multi(playback/lyrics): - use sequential lyrics fetching based on provider priority - change lyrics provider order to BetterLyrics, LrcLib, KuGou, Paxsenix, LyricsPlus... - fixed paxsenix being the only lyrics provider (migration bug) - reenabled lyricsplus by default - make experimental lyrics enabled by default - fixed playback and song uploading
+[33mc4ffb9c34[m feat(ui): enhance speed dial pinning and preserve metadata
+[33m29aaa83a2[m[33m ([m[1;31morigin/feat/optimize-downloads[m[33m)[m fix(download): optimize large playlist downloads and prevent system crashes
+[33m75867f0e8[m feat(stats): add toggle to disable Weekly and Monthly Most playlists (#3579)
+[33mf0be52e87[m feat(player): force absolute maximum audio quality (#3549)
+[33m38c8e122b[m fix: Android Auto Mixes show correct personalized playlists (#3608)
+[33m3f0a9a028[m feat(audio): reorder quality options to [auto, low, high, very_high] (#3543)
+[33mb0838069d[m Fix playback issues in 13.4.2 (#3646)
+[33m8f07cb61d[m fix(lyrics): improve retrieval quality and reduce latency
+[33m309a34289[m Enhance experimental lyrics : fix devnagari rendering glitch (#3657)
+[33m26d90cd50[m fix: proto generation and config cache for gradle builds
+[33m257b8c0d8[m feat: migrate to Protobuf Gradle plugin for OS-independent generation (#3577)
+[33m346c67e01[m feat: audio normalization loudness level selector (#3358)
+[33me033e4afe[m fix(ui): prevent cancel action duplication in download notification (#3636)
+[33mc1b56733a[m chore: remove belberi since the apk is so old there
+[33m884c90675[m[33m ([m[1;33mtag: [m[1;33mv13.4.2[m[33m, [m[1;33mtag: [m[1;33mv[m[33m)[m Translations update from Hosted Weblate (#3556)
+[33m8c30978b4[m Translated using Weblate (Hungarian)
+[33m2bd3a658d[m Translated using Weblate (Dutch)
+[33me3ca7b8e9[m Translated using Weblate (Chinese (Traditional Han script))
+[33m432f65d4b[m Translated using Weblate (Bengali)
+[33mdcb0fafdd[m Translated using Weblate (Vietnamese)
+[33mf133c8542[m Translated using Weblate (Japanese)
