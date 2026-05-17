@@ -220,7 +220,12 @@ constructor(
                         AndroidAutoSectionsOrderKey,
                         serializeSections(AndroidAutoSection.values().map { it to true })
                     )
-                    val sections = deserializeSections(sectionsRaw)
+                    val sections = listOf(
+                        AndroidAutoSection.LIKED to true,
+                        AndroidAutoSection.SONGS to true,
+                        AndroidAutoSection.ARTISTS to true,
+                        AndroidAutoSection.RECOMMENDED to true,
+                    )
                     val showYoutubePlaylists = context.dataStore.get(AndroidAutoYouTubePlaylistsKey, false)
                     val rootItems = sections
                         .filter { (_, enabled) -> enabled }
@@ -262,8 +267,16 @@ constructor(
                                     drawableUri(R.drawable.queue_music),
                                     MediaMetadata.MEDIA_TYPE_FOLDER_PLAYLISTS,
                                 )
+                                AndroidAutoSection.RECOMMENDED -> browsableMediaItem(
+                                    MusicService.RECOMMENDED,
+                                    context.getString(R.string.android_auto_recommended),
+                                    null,
+                                    drawableUri(R.drawable.explore_outlined),
+                                    MediaMetadata.MEDIA_TYPE_FOLDER_MIXED,
+                                )
                             }
                         }
+                    android.util.Log.d("PTUBE", "ROOT tabs count=${rootItems.size}, names=${rootItems.map { it.mediaMetadata.title }}")
                     if (showYoutubePlaylists) {
                         rootItems + browsableMediaItem(
                             MusicService.YOUTUBE_PLAYLIST,
@@ -417,10 +430,54 @@ constructor(
                                     MediaMetadata.MEDIA_TYPE_PLAYLIST,
                                 )
                             }
+
                         } catch (e: Exception) {
                             reportException(e)
                             emptyList()
                         }
+                    }
+                }
+
+                MusicService.RECOMMENDED -> {
+                    try {
+                        val allSections = mutableListOf<com.metrolist.innertube.pages.HomePage.Section>()
+                        var continuation: String? = null
+                        val maxPages = 4
+
+                        for (page in 0 until maxPages) {
+                            val result = YouTube.home(continuation)
+                                .onFailure { reportException(it) }
+                                .getOrNull() ?: break
+                            allSections.addAll(result.sections)
+                            continuation = result.continuation
+                            if (continuation == null) break
+                        }
+
+                        val songs = allSections
+                            .flatMap { it.items }
+                            .filterIsInstance<SongItem>()
+                            .filterExplicit(context.dataStore.get(HideExplicitKey, false))
+                            .filterVideoSongs(context.dataStore.get(HideVideoSongsKey, false))
+                            .distinctBy { it.id }
+
+                        android.util.Log.d("PTUBE", "RECOMMENDED songs count=${songs.size}")
+
+                        val shuffleItem: MediaItem = MediaItem.Builder()
+                            .setMediaId("${MusicService.RECOMMENDED}/${MusicService.SHUFFLE_ACTION}")
+                            .setMediaMetadata(
+                                MediaMetadata.Builder()
+                                    .setTitle(context.getString(R.string.shuffle))
+                                    .setArtworkUri(drawableUri(R.drawable.shuffle))
+                                    .setIsPlayable(true)
+                                    .setIsBrowsable(false)
+                                    .setMediaType(MediaMetadata.MEDIA_TYPE_MUSIC)
+                                    .build()
+                            ).build()
+
+                        listOf(shuffleItem) + songs.map { it.toCarMediaItem(MusicService.RECOMMENDED) }
+                    } catch (e: Exception) {
+                        reportException(e)
+                        emptyList()
                     }
                 }
 
@@ -583,6 +640,47 @@ constructor(
                             val songItems: List<MediaItem> = songs.map { it.toCarMediaItem(parentId) }
 
                             listOf(shuffleItem) + songItems
+                        }
+
+                        parentId.startsWith("${MusicService.RECOMMENDED}/") -> {
+                            try {
+                                val allSections = mutableListOf<com.metrolist.innertube.pages.HomePage.Section>()
+                                var continuation: String? = null
+                                val maxPages = 4
+
+                                for (page in 0 until maxPages) {
+                                    val result = YouTube.home(continuation)
+                                        .onFailure { reportException(it) }
+                                        .getOrNull() ?: break
+                                    allSections.addAll(result.sections)
+                                    continuation = result.continuation
+                                    if (continuation == null) break
+                                }
+
+                                val songs = allSections
+                                    .flatMap { it.items }
+                                    .filterIsInstance<SongItem>()
+                                    .filterExplicit(context.dataStore.get(HideExplicitKey, false))
+                                    .filterVideoSongs(context.dataStore.get(HideVideoSongsKey, false))
+                                    .distinctBy { it.id }
+
+                                val shuffleItem: MediaItem = MediaItem.Builder()
+                                    .setMediaId("${MusicService.RECOMMENDED}/${MusicService.SHUFFLE_ACTION}")
+                                    .setMediaMetadata(
+                                        MediaMetadata.Builder()
+                                            .setTitle(context.getString(R.string.shuffle))
+                                            .setArtworkUri(drawableUri(R.drawable.shuffle))
+                                            .setIsPlayable(true)
+                                            .setIsBrowsable(false)
+                                            .setMediaType(MediaMetadata.MEDIA_TYPE_MUSIC)
+                                            .build()
+                                    ).build()
+
+                                listOf(shuffleItem) + songs.map { it.toCarMediaItem(MusicService.RECOMMENDED) }
+                            } catch (e: Exception) {
+                                reportException(e)
+                                emptyList()
+                            }
                         }
 
                         else -> emptyList()
@@ -906,6 +1004,46 @@ constructor(
                             songs.indexOfFirst { it.mediaId.endsWith(songId) }.takeIf { idx -> idx != -1 } ?: 0,
                             C.TIME_UNSET
                         )
+                    }
+                }
+
+                MusicService.RECOMMENDED -> {
+                    val songId = path.getOrNull(1) ?: return@future defaultResult
+                    try {
+                        val allSections = mutableListOf<com.metrolist.innertube.pages.HomePage.Section>()
+                        var continuation: String? = null
+                        val maxPages = 4
+
+                        for (page in 0 until maxPages) {
+                            val result = YouTube.home(continuation)
+                                .onFailure { reportException(it) }
+                                .getOrNull() ?: break
+                            allSections.addAll(result.sections)
+                            continuation = result.continuation
+                            if (continuation == null) break
+                        }
+
+                        val ytSongs = allSections
+                            .flatMap { it.items }
+                            .filterIsInstance<SongItem>()
+                            .distinctBy { it.id }
+
+                        if (songId == MusicService.SHUFFLE_ACTION) {
+                            MediaItemsWithStartPosition(
+                                ytSongs.shuffled().map { it.toMediaItem() },
+                                0,
+                                C.TIME_UNSET
+                            )
+                        } else {
+                            MediaItemsWithStartPosition(
+                                ytSongs.map { it.toMediaItem() },
+                                ytSongs.indexOfFirst { it.id == songId }.takeIf { idx -> idx != -1 } ?: 0,
+                                C.TIME_UNSET
+                            )
+                        }
+                    } catch (e: Exception) {
+                        reportException(e)
+                        defaultResult
                     }
                 }
 
