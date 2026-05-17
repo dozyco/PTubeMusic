@@ -41,6 +41,7 @@ class AlbumArtContentProvider : ContentProvider() {
         fun mapUri(uri: Uri): Uri {
             // 웹 URL 경로의 '/' 를 ':' 로 바꿔 단일 path 로 만든다 (Google 공식 방식)
             val path = uri.encodedPath?.substring(1)?.replace('/', ':') ?: return Uri.EMPTY
+            android.util.Log.d("PTUBE_ART", "mapUri: input=$uri, path=$path")
             val contentUri = Uri.Builder()
                 .scheme(ContentResolver.SCHEME_CONTENT)
                 .authority(AUTHORITY)
@@ -60,6 +61,7 @@ class AlbumArtContentProvider : ContentProvider() {
         val context = this.context ?: return null
         // content:// URI 로부터 원본 웹 URL 을 찾는다
         val remoteUri = uriMap[uri] ?: throw FileNotFoundException(uri.path)
+        android.util.Log.d("PTUBE_ART", "openFile: requested uri=$uri, mapped=${uriMap[uri]}")
 
         // 캐시 파일 경로 (uri.path 기반, '/' 는 '_' 로 치환해 파일명 안전화)
         val safeName = (uri.path ?: "art").replace('/', '_').replace(':', '_')
