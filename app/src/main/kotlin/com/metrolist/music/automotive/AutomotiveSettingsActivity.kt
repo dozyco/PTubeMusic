@@ -30,6 +30,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -37,12 +38,14 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -55,8 +58,11 @@ import com.metrolist.music.BuildConfig
 import com.metrolist.music.constants.AccountChannelHandleKey
 import com.metrolist.music.constants.AccountEmailKey
 import com.metrolist.music.constants.AccountNameKey
+import com.metrolist.music.constants.AudioQualityKey
+import com.metrolist.music.constants.AudioQuality
 import com.metrolist.music.constants.InnerTubeCookieKey
 import com.metrolist.music.constants.VisitorDataKey
+import com.metrolist.music.extensions.toEnum
 import com.metrolist.music.ui.theme.MetrolistTheme
 import com.metrolist.music.utils.dataStore
 import com.metrolist.music.utils.get
@@ -79,7 +85,8 @@ class AutomotiveSettingsActivity : ComponentActivity() {
                 SettingsScreen(
                     onCloseClick = { finish() },
                     onSaveCookie = { cookie -> saveCookie(cookie) },
-                    onLogoutClick = { performLogout() }
+                    onLogoutClick = { performLogout() },
+                    onSelectAudioQuality = { quality -> saveAudioQuality(quality) }
                 )
             }
         }
@@ -87,12 +94,6 @@ class AutomotiveSettingsActivity : ComponentActivity() {
 
     /**
      * 쿠키 문자열을 표준 형식으로 정규화한다.
-     * 입력으로 들어오는 쿠키는 다양한 형식을 가질 수 있다:
-     * - "key1=val1;key2=val2"          (공백 없음)
-     * - "key1=val1; key2=val2"         (표준 형식)
-     * - "key1=val1\nkey2=val2"         (줄바꿈)
-     * - 따옴표가 포함된 경우
-     * 이를 모두 표준 "key1=val1; key2=val2" 형식으로 변환한다.
      */
     private fun normalizeCookie(cookie: String): String {
         return cookie
@@ -185,6 +186,33 @@ class AutomotiveSettingsActivity : ComponentActivity() {
             recreate()
         }
     }
+
+    /**
+     * 음질 설정을 저장한다. 저장된 값은 재생 시 MusicService 가 사용한다.
+     */
+    private fun saveAudioQuality(quality: AudioQuality) {
+        lifecycleScope.launch {
+            dataStore.edit { prefs ->
+                prefs[AudioQualityKey] = quality.name
+            }
+            Toast.makeText(
+                this@AutomotiveSettingsActivity,
+                "음질 설정: ${quality.name}",
+                Toast.LENGTH_SHORT
+            ).show()
+            recreate()
+        }
+    }
+}
+
+/**
+ * 쿠키 상태를 나타내는 값.
+ */
+private enum class CookieStatus {
+    CHECKING,   // 확인 중
+    VALID,      // 정상 (쿠키 유효)
+    EXPIRED,    // 만료됨 (쿠키는 있으나 인증 실패)
+    NONE        // 쿠키 없음 (로그인 안 함)
 }
 
 @Composable
@@ -192,13 +220,15 @@ private fun SettingsScreen(
     onCloseClick: () -> Unit,
     onSaveCookie: (String) -> Unit,
     onLogoutClick: () -> Unit,
+    onSelectAudioQuality: (AudioQuality) -> Unit,
 ) {
     val context = LocalContext.current
 
-    val isLoggedIn = remember {
-        "SAPISID" in parseCookieString(
-            context.dataStore.get(InnerTubeCookieKey, "")
-        )
+    val savedCookie = remember {
+        context.dataStore.get(InnerTubeCookieKey, "")
+    }
+    val hasCookie = remember {
+        "SAPISID" in parseCookieString(savedCookie)
     }
 
     val accountName = remember {
@@ -208,7 +238,39 @@ private fun SettingsScreen(
         context.dataStore.get(AccountEmailKey, "")
     }
 
+    val currentAudioQuality = remember {
+        context.dataStore.get(AudioQualityKey, AudioQuality.AUTO.name)
+            .toEnum(AudioQuality.AUTO)
+    }
+
     var cookieInput by remember { mutableStateOf("") }
+
+    // 쿠키 상태: 처음엔 쿠키 유무에 따라 CHECKING 또는 NONE
+    var cookieStatus by remember {
+        mutableStateOf(if (hasCookie) CookieStatus.CHECKING else CookieStatus.NONE)
+    }
+
+    // 화면이 뜰 때 쿠키가 있으면 실제로 YouTube 에 요청을 보내 유효한지 검사한다.
+    LaunchedEffect(hasCookie) {
+        if (hasCookie) {
+            cookieStatus = CookieStatus.CHECKING
+            val result = withContext(Dispatchers.IO) {
+                try {
+                    YouTube.cookie = savedCookie
+                    YouTube.accountInfo()
+                } catch (e: Exception) {
+                    Result.failure<Any>(e)
+                }
+            }
+            cookieStatus = if (result.isSuccess) {
+                CookieStatus.VALID
+            } else {
+                CookieStatus.EXPIRED
+            }
+        } else {
+            cookieStatus = CookieStatus.NONE
+        }
+    }
 
     Surface(
         modifier = Modifier.fillMaxSize(),
@@ -270,7 +332,7 @@ private fun SettingsScreen(
                             )
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                text = if (isLoggedIn) {
+                                text = if (hasCookie) {
                                     accountName.ifEmpty { accountEmail.ifEmpty { "로그인됨" } }
                                 } else {
                                     "로그인되지 않음"
@@ -281,7 +343,59 @@ private fun SettingsScreen(
                         }
                     }
 
-                    if (isLoggedIn) {
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    // 쿠키 상태 표시 영역
+                    when (cookieStatus) {
+                        CookieStatus.CHECKING -> {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(20.dp),
+                                    strokeWidth = 2.dp,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Text(
+                                    text = "로그인 상태 확인 중...",
+                                    fontSize = 15.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                        CookieStatus.VALID -> {
+                            Text(
+                                text = "✓ 로그인 정상 (쿠키 유효)",
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color(0xFF2E7D32) // 초록
+                            )
+                        }
+                        CookieStatus.EXPIRED -> {
+                            Column {
+                                Text(
+                                    text = "⚠ 쿠키 만료됨 — 재로그인 필요",
+                                    fontSize = 16.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFFC62828) // 빨강
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = "라이브러리/추천이 안 보이면 아래에서 새 쿠키로 다시 로그인하세요.",
+                                    fontSize = 13.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                        CookieStatus.NONE -> {
+                            Text(
+                                text = "로그인되지 않음",
+                                fontSize = 15.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+
+                    if (hasCookie) {
                         Spacer(modifier = Modifier.height(20.dp))
                         Button(
                             onClick = onLogoutClick,
@@ -304,7 +418,8 @@ private fun SettingsScreen(
                 }
             }
 
-            if (!isLoggedIn) {
+            // 쿠키 입력 카드: 로그인 안 됐거나 만료됐을 때 노출
+            if (!hasCookie || cookieStatus == CookieStatus.EXPIRED) {
                 Spacer(modifier = Modifier.height(16.dp))
 
                 Card(
@@ -318,7 +433,7 @@ private fun SettingsScreen(
                         modifier = Modifier.padding(24.dp)
                     ) {
                         Text(
-                            text = "쿠키로 로그인",
+                            text = if (cookieStatus == CookieStatus.EXPIRED) "쿠키 다시 입력" else "쿠키로 로그인",
                             fontSize = 20.sp,
                             fontWeight = FontWeight.SemiBold,
                             color = MaterialTheme.colorScheme.onSurface
@@ -327,9 +442,9 @@ private fun SettingsScreen(
                         Spacer(modifier = Modifier.height(8.dp))
 
                         Text(
-                            text = "PC 브라우저에서 music.youtube.com 로그인 후, " +
-                                    "F12 → Application → Cookies 에서 쿠키를 복사해 붙여넣으세요. " +
-                                    "공백 없는 형식도 자동으로 인식됩니다.",
+                            text = "PC 브라우저 시크릿창에서 music.youtube.com 로그인 후, " +
+                                    "F12 → Network → browse 요청의 Cookie 값을 복사해 붙여넣으세요. " +
+                                    "쿠키를 뽑은 시크릿창은 로그아웃하지 말고 그냥 닫으면 오래 유지됩니다.",
                             fontSize = 13.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             lineHeight = 18.sp
@@ -368,6 +483,74 @@ private fun SettingsScreen(
                                 text = "저장하고 로그인",
                                 fontSize = 18.sp,
                                 fontWeight = FontWeight.Medium
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // 음질 설정 카드
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant
+                ),
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(24.dp)
+                ) {
+                    Text(
+                        text = "음질",
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+
+                    Spacer(modifier = Modifier.height(4.dp))
+
+                    Text(
+                        text = "현재: ${audioQualityLabel(currentAudioQuality)}",
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    val qualities = listOf(
+                        AudioQuality.AUTO,
+                        AudioQuality.LOW,
+                        AudioQuality.HIGH,
+                        AudioQuality.VERY_HIGH,
+                    )
+
+                    qualities.forEach { quality ->
+                        val selected = quality == currentAudioQuality
+                        Button(
+                            onClick = { onSelectAudioQuality(quality) },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(52.dp)
+                                .padding(vertical = 4.dp),
+                            shape = RoundedCornerShape(12.dp),
+                            colors = if (selected) {
+                                ButtonDefaults.buttonColors(
+                                    containerColor = MaterialTheme.colorScheme.primary,
+                                    contentColor = MaterialTheme.colorScheme.onPrimary
+                                )
+                            } else {
+                                ButtonDefaults.buttonColors(
+                                    containerColor = MaterialTheme.colorScheme.surface,
+                                    contentColor = MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                        ) {
+                            Text(
+                                text = audioQualityLabel(quality) + if (selected) "  ✓" else "",
+                                fontSize = 16.sp,
+                                fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal
                             )
                         }
                     }
@@ -421,6 +604,16 @@ private fun SettingsScreen(
             )
         }
     }
+}
+
+/**
+ * 음질 enum 을 사람이 읽기 좋은 라벨로 변환한다.
+ */
+private fun audioQualityLabel(quality: AudioQuality): String = when (quality) {
+    AudioQuality.AUTO -> "자동 (Auto)"
+    AudioQuality.LOW -> "낮음 (Low)"
+    AudioQuality.HIGH -> "높음 (High)"
+    AudioQuality.VERY_HIGH -> "매우 높음 (Very High)"
 }
 
 @Composable

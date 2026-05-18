@@ -86,6 +86,11 @@ constructor(
     var toggleLibrary: () -> Unit = {}
     var addToTargetPlaylist: () -> Unit = {}
 
+    @Volatile
+    private var lastSearchSongs: List<SongItem> = emptyList()
+    @Volatile
+    private var lastRecommendedSongs: List<SongItem> = emptyList()
+
     fun release() {
         scope.cancel()
     }
@@ -460,6 +465,8 @@ constructor(
                             .filterVideoSongs(context.dataStore.get(HideVideoSongsKey, false))
                             .distinctBy { it.id }
 
+                        lastRecommendedSongs = songs
+
                         android.util.Log.d("PTUBE", "RECOMMENDED songs count=${songs.size}")
 
                         val shuffleItem: MediaItem = MediaItem.Builder()
@@ -776,6 +783,8 @@ constructor(
                             }
                         } ?: emptyList()
 
+                    lastSearchSongs = onlineResults
+
                     onlineResults.forEach { songItem ->
                         try {
                             database.query { insert(songItem.toMediaMetadata()) }
@@ -1009,47 +1018,37 @@ constructor(
 
                 MusicService.RECOMMENDED -> {
                     val songId = path.getOrNull(1) ?: return@future defaultResult
-                    try {
-                        val allSections = mutableListOf<com.metrolist.innertube.pages.HomePage.Section>()
-                        var continuation: String? = null
-                        val maxPages = 4
+                    val ytSongs = lastRecommendedSongs
+                    if (ytSongs.isEmpty()) return@future defaultResult
 
-                        for (page in 0 until maxPages) {
-                            val result = YouTube.home(continuation)
-                                .onFailure { reportException(it) }
-                                .getOrNull() ?: break
-                            allSections.addAll(result.sections)
-                            continuation = result.continuation
-                            if (continuation == null) break
-                        }
-
-                        val ytSongs = allSections
-                            .flatMap { it.items }
-                            .filterIsInstance<SongItem>()
-                            .distinctBy { it.id }
-
-                        if (songId == MusicService.SHUFFLE_ACTION) {
-                            MediaItemsWithStartPosition(
-                                ytSongs.shuffled().map { it.toMediaItem() },
-                                0,
-                                C.TIME_UNSET
-                            )
-                        } else {
-                            MediaItemsWithStartPosition(
-                                ytSongs.map { it.toMediaItem() },
-                                ytSongs.indexOfFirst { it.id == songId }.takeIf { idx -> idx != -1 } ?: 0,
-                                C.TIME_UNSET
-                            )
-                        }
-                    } catch (e: Exception) {
-                        reportException(e)
-                        defaultResult
+                    if (songId == MusicService.SHUFFLE_ACTION) {
+                        MediaItemsWithStartPosition(
+                            ytSongs.shuffled().map { it.toMediaItem() },
+                            0,
+                            C.TIME_UNSET
+                        )
+                    } else {
+                        MediaItemsWithStartPosition(
+                            ytSongs.map { it.toMediaItem() },
+                            ytSongs.indexOfFirst { it.id == songId }.takeIf { idx -> idx != -1 } ?: 0,
+                            C.TIME_UNSET
+                        )
                     }
                 }
 
                 MusicService.SEARCH -> {
                     val songId = path.getOrNull(2) ?: return@future defaultResult
                     val searchQuery = path.getOrNull(1) ?: return@future defaultResult
+
+                    val cachedSongs = lastSearchSongs
+                    if (cachedSongs.isNotEmpty()) {
+                        val tIdx = cachedSongs.indexOfFirst { it.id == songId }
+                        return@future MediaItemsWithStartPosition(
+                            cachedSongs.map { it.toMediaItem() },
+                            if (tIdx >= 0) tIdx else 0,
+                            C.TIME_UNSET
+                        )
+                    }
 
                     val searchResults = mutableListOf<Song>()
 
