@@ -4144,6 +4144,8 @@ class MusicService :
         const val PLAYLIST = "playlist"
         const val YOUTUBE_PLAYLIST = "youtube_playlist"
         const val RECOMMENDED = "recommended"
+        const val LIBRARY = "library"
+        const val SUBSCRIPTION = "subscription"
         const val SEARCH = "search"
         const val SHUFFLE_ACTION = "__shuffle__"
 

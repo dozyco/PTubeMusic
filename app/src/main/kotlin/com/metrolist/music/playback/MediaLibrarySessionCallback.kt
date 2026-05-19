@@ -221,78 +221,22 @@ constructor(
             android.util.Log.d("PTUBE", "onGetChildren: parentId=$parentId")
             val items: List<MediaItem> = when (parentId) {
                 MusicService.ROOT -> {
-                    val sectionsRaw = context.dataStore.get(
-                        AndroidAutoSectionsOrderKey,
-                        serializeSections(AndroidAutoSection.values().map { it to true })
-                    )
-                    val sections = listOf(
-                        AndroidAutoSection.LIKED to true,
-                        AndroidAutoSection.SONGS to true,
-                        AndroidAutoSection.ARTISTS to true,
-                        AndroidAutoSection.RECOMMENDED to true,
-                    )
-                    val showYoutubePlaylists = context.dataStore.get(AndroidAutoYouTubePlaylistsKey, false)
-                    val rootItems = sections
-                        .filter { (_, enabled) -> enabled }
-                        .ifEmpty { listOf(AndroidAutoSection.LIKED to true) }
-                        .map { (section, _) ->
-                            when (section) {
-                                AndroidAutoSection.LIKED -> browsableMediaItem(
-                                    "${MusicService.PLAYLIST}/${PlaylistEntity.LIKED_PLAYLIST_ID}",
-                                    context.getString(R.string.liked_songs),
-                                    null,
-                                    drawableUri(R.drawable.favorite),
-                                    MediaMetadata.MEDIA_TYPE_PLAYLIST,
-                                )
-                                AndroidAutoSection.SONGS -> browsableMediaItem(
-                                    MusicService.SONG,
-                                    context.getString(R.string.songs),
-                                    null,
-                                    drawableUri(R.drawable.music_note),
-                                    MediaMetadata.MEDIA_TYPE_PLAYLIST,
-                                )
-                                AndroidAutoSection.ARTISTS -> browsableMediaItem(
-                                    MusicService.ARTIST,
-                                    context.getString(R.string.artists),
-                                    null,
-                                    drawableUri(R.drawable.artist),
-                                    MediaMetadata.MEDIA_TYPE_FOLDER_ARTISTS,
-                                )
-                                AndroidAutoSection.ALBUMS -> browsableMediaItem(
-                                    MusicService.ALBUM,
-                                    context.getString(R.string.albums),
-                                    null,
-                                    drawableUri(R.drawable.album),
-                                    MediaMetadata.MEDIA_TYPE_FOLDER_ALBUMS,
-                                )
-                                AndroidAutoSection.PLAYLISTS -> browsableMediaItem(
-                                    MusicService.PLAYLIST,
-                                    context.getString(R.string.playlists),
-                                    null,
-                                    drawableUri(R.drawable.queue_music),
-                                    MediaMetadata.MEDIA_TYPE_FOLDER_PLAYLISTS,
-                                )
-                                AndroidAutoSection.RECOMMENDED -> browsableMediaItem(
-                                    MusicService.RECOMMENDED,
-                                    context.getString(R.string.android_auto_recommended),
-                                    null,
-                                    drawableUri(R.drawable.explore_outlined),
-                                    MediaMetadata.MEDIA_TYPE_FOLDER_MIXED,
-                                )
-                            }
-                        }
-                    android.util.Log.d("PTUBE", "ROOT tabs count=${rootItems.size}, names=${rootItems.map { it.mediaMetadata.title }}")
-                    if (showYoutubePlaylists) {
-                        rootItems + browsableMediaItem(
-                            MusicService.YOUTUBE_PLAYLIST,
-                            context.getString(R.string.mixes),
+                    listOf(
+                        browsableMediaItem(
+                            MusicService.RECOMMENDED,
+                            context.getString(R.string.android_auto_recommended),
                             null,
                             drawableUri(R.drawable.explore_outlined),
-                            MediaMetadata.MEDIA_TYPE_FOLDER_PLAYLISTS,
-                        )
-                    } else {
-                        rootItems
-                    }
+                            MediaMetadata.MEDIA_TYPE_FOLDER_MIXED,
+                        ),
+                        browsableMediaItem(
+                            MusicService.LIBRARY,
+                            "Library",
+                            null,
+                            drawableUri(R.drawable.queue_music),
+                            MediaMetadata.MEDIA_TYPE_FOLDER_MIXED,
+                        ),
+                    )
                 }
 
                 MusicService.SONG -> {
@@ -443,6 +387,35 @@ constructor(
                     }
                 }
 
+                MusicService.LIBRARY -> {
+                    listOf(
+                        browsableMediaItem(
+                            MusicService.PLAYLIST,
+                            context.getString(R.string.playlists),
+                            null,
+                            drawableUri(R.drawable.queue_music),
+                            MediaMetadata.MEDIA_TYPE_FOLDER_PLAYLISTS,
+                        ),
+                        browsableMediaItem(
+                            MusicService.ARTIST,
+                            context.getString(R.string.artists),
+                            null,
+                            drawableUri(R.drawable.artist),
+                            MediaMetadata.MEDIA_TYPE_FOLDER_ARTISTS,
+                        ),
+                        browsableMediaItem(
+                            MusicService.SUBSCRIPTION,
+                            "Subscriptions",
+                            null,
+                            drawableUri(R.drawable.explore_outlined),
+                            MediaMetadata.MEDIA_TYPE_FOLDER_MIXED,
+                        ),
+                    )
+                }
+
+                MusicService.SUBSCRIPTION -> {
+                    listOf<MediaItem>()
+                }
                 MusicService.RECOMMENDED -> {
                     try {
                         val allSections = mutableListOf<com.metrolist.innertube.pages.HomePage.Section>()
@@ -1037,87 +1010,41 @@ constructor(
                 }
 
                 MusicService.SEARCH -> {
-                    val songId = path.getOrNull(2) ?: return@future defaultResult
-                    val searchQuery = path.getOrNull(1) ?: return@future defaultResult
+                    val songId = path.lastOrNull() ?: return@future defaultResult
 
-                    val cachedSongs = lastSearchSongs
-                    if (cachedSongs.isNotEmpty()) {
-                        val tIdx = cachedSongs.indexOfFirst { it.id == songId }
+                    if (songId.isBlank() || songId == MusicService.SEARCH) {
+                        return@future defaultResult
+                    }
+
+                    val song = database.song(songId).first()
+                    if (song != null) {
                         return@future MediaItemsWithStartPosition(
-                            cachedSongs.map { it.toMediaItem() },
-                            if (tIdx >= 0) tIdx else 0,
+                            listOf(song.toMediaItem()),
+                            0,
                             C.TIME_UNSET
                         )
                     }
 
-                    val searchResults = mutableListOf<Song>()
-
-                    val localSongs = database.allSongs().first().filter { song ->
-                        song.song.title.contains(searchQuery, ignoreCase = true) ||
-                                song.artists.any { it.name.contains(searchQuery, ignoreCase = true) } ||
-                                song.album?.title?.contains(searchQuery, ignoreCase = true) == true
-                    }
-
-                    val artistSongs = database.searchArtists(searchQuery).first().flatMap { artist ->
-                        database.artistSongsByCreateDateAsc(artist.id).first()
-                    }
-
-                    val albumSongs = database.searchAlbums(searchQuery).first().flatMap { album ->
-                        database.albumSongs(album.id).first()
-                    }
-
-                    val playlistSongs = database.searchPlaylists(searchQuery).first().flatMap { playlist ->
-                        database.playlistSongs(playlist.id).first().map { it.song }
-                    }
-
-                    val allLocalSongs = (localSongs + artistSongs + albumSongs + playlistSongs)
-                        .distinctBy { it.id }
-
-                    searchResults.addAll(allLocalSongs)
-
-                    try {
-                        val onlineResults = YouTube.search(searchQuery, YouTube.SearchFilter.FILTER_SONG)
+                    val ytSong = try {
+                        YouTube.search(songId, YouTube.SearchFilter.FILTER_SONG)
                             .getOrNull()
                             ?.items
                             ?.filterIsInstance<SongItem>()
-                            ?.filterExplicit(context.dataStore.get(HideExplicitKey, false))
-                            ?.filterVideoSongs(context.dataStore.get(HideVideoSongsKey, false))
-                            ?.filter { onlineSong ->
-                                !allLocalSongs.any { localSong ->
-                                    localSong.id == onlineSong.id ||
-                                            (localSong.song.title.equals(onlineSong.title, ignoreCase = true) &&
-                                                    localSong.artists.any { artist ->
-                                                        onlineSong.artists.any {
-                                                            it.name.equals(artist.name, ignoreCase = true)
-                                                        }
-                                                    })
-                                }
-                            } ?: emptyList()
-
-                        onlineResults.forEach { songItem ->
-                            try {
-                                database.query { insert(songItem.toMediaMetadata()) }
-                                database.song(songItem.id).first()?.let { newSong ->
-                                    searchResults.add(newSong)
-                                }
-                            } catch (e: Exception) {
-                            }
-                        }
+                            ?.firstOrNull { it.id == songId }
                     } catch (e: Exception) {
                         reportException(e)
+                        null
                     }
 
-                    if (searchResults.isEmpty()) {
-                        return@future defaultResult
+                    if (ytSong != null) {
+                        return@future MediaItemsWithStartPosition(
+                            listOf(ytSong.toMediaItem()),
+                            0,
+                            C.TIME_UNSET
+                        )
                     }
 
-                    val targetIndex = searchResults.indexOfFirst { it.id == songId }
-
-                    MediaItemsWithStartPosition(
-                        searchResults.map { it.toMediaItem() },
-                        if (targetIndex >= 0) targetIndex else 0,
-                        C.TIME_UNSET
-                    )
+                    return@future defaultResult
                 }
 
                 else -> defaultResult
