@@ -1010,13 +1010,37 @@ constructor(
                 }
 
                 MusicService.SEARCH -> {
-                    val songId = path.lastOrNull() ?: return@future defaultResult
+                    val rawId = path.lastOrNull()
+                    val songId = rawId ?: ""
 
-                    if (songId.isBlank() || songId == MusicService.SEARCH) {
-                        return@future defaultResult
+                    fun debugItem(msg: String): MediaItemsWithStartPosition {
+                        val di = MediaItem.Builder()
+                            .setMediaId("debug/${System.currentTimeMillis()}")
+                            .setMediaMetadata(
+                                MediaMetadata.Builder()
+                                    .setTitle(msg)
+                                    .setArtist("DEBUG")
+                                    .setIsPlayable(true)
+                                    .setIsBrowsable(false)
+                                    .setMediaType(MediaMetadata.MEDIA_TYPE_MUSIC)
+                                    .build()
+                            ).build()
+                        return MediaItemsWithStartPosition(listOf(di), 0, C.TIME_UNSET)
                     }
 
-                    val song = database.song(songId).first()
+                    if (rawId == null) {
+                        return@future debugItem("DEBUG-1: path 비었음 path=${path.joinToString("|")}")
+                    }
+                    if (songId.isBlank() || songId == MusicService.SEARCH) {
+                        return@future debugItem("DEBUG-2: songId 비정상 path=${path.joinToString("|")}")
+                    }
+
+                    val song = try {
+                        database.song(songId).first()
+                    } catch (e: Exception) {
+                        return@future debugItem("DEBUG-3: DB조회 예외 ${e.message}")
+                    }
+
                     if (song != null) {
                         return@future MediaItemsWithStartPosition(
                             listOf(song.toMediaItem()),
@@ -1032,8 +1056,7 @@ constructor(
                             ?.filterIsInstance<SongItem>()
                             ?.firstOrNull { it.id == songId }
                     } catch (e: Exception) {
-                        reportException(e)
-                        null
+                        return@future debugItem("DEBUG-4: 네트워크 예외 ${e.message}")
                     }
 
                     if (ytSong != null) {
@@ -1044,7 +1067,7 @@ constructor(
                         )
                     }
 
-                    return@future defaultResult
+                    return@future debugItem("DEBUG-5: DB없음+네트워크없음 songId=$songId")
                 }
 
                 else -> defaultResult
