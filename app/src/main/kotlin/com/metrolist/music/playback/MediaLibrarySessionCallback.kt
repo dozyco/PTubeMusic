@@ -775,7 +775,7 @@ constructor(
                     searchResults.add(song.toMediaItem(
                         path = "${MusicService.SEARCH}/$query",
                         isPlayable = true,
-                        isBrowsable = true
+                        isBrowsable = false
                     ))
                 }
 
@@ -819,7 +819,7 @@ constructor(
                                         .setArtist(songItem.artists.joinToString(", ") { it.name })
                                         .setArtworkUri(songItem.thumbnail.toUri().let { AlbumArtContentProvider.mapUri(it) })
                                         .setIsPlayable(true)
-                                        .setIsBrowsable(true)
+                                        .setIsBrowsable(false)
                                         .setMediaType(MediaMetadata.MEDIA_TYPE_MUSIC)
                                         .build()
                                 )
