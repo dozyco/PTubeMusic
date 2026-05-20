@@ -71,6 +71,7 @@ import kotlinx.coroutines.guava.future
 import kotlinx.coroutines.plus
 import javax.inject.Inject
 import com.metrolist.music.automotive.AlbumArtContentProvider
+import com.metrolist.music.automotive.LogBuffer
 
 class MediaLibrarySessionCallback
 @Inject
@@ -218,7 +219,7 @@ constructor(
         params: MediaLibraryService.LibraryParams?,
     ): ListenableFuture<LibraryResult<ImmutableList<MediaItem>>> =
         scope.future(Dispatchers.IO) {
-            android.util.Log.d("PTUBE", "onGetChildren: parentId=$parentId")
+            LogBuffer.log("onGetChildren: parentId=$parentId")
             val items: List<MediaItem> = when (parentId) {
                 MusicService.ROOT -> {
                     val sectionsRaw = context.dataStore.get(
@@ -281,7 +282,7 @@ constructor(
                                 )
                             }
                         }
-                    android.util.Log.d("PTUBE", "ROOT tabs count=${rootItems.size}, names=${rootItems.map { it.mediaMetadata.title }}")
+                    LogBuffer.log("ROOT tabs count=${rootItems.size}, names=${rootItems.map { it.mediaMetadata.title }}")
                     if (showYoutubePlaylists) {
                         rootItems + browsableMediaItem(
                             MusicService.YOUTUBE_PLAYLIST,
@@ -296,13 +297,18 @@ constructor(
                 }
 
                 MusicService.SONG -> {
+                    val libStart = System.currentTimeMillis()
+                    LogBuffer.log("YouTube.library(FEmusic_liked_videos) 호출 시작 (SONG)")
                     val songs: List<SongItem> = try {
-                        YouTube.library("FEmusic_liked_videos").completed().getOrNull()
+                        val result = YouTube.library("FEmusic_liked_videos").completed().getOrNull()
                             ?.items?.filterIsInstance<SongItem>()
                             ?.filterExplicit(context.dataStore.get(HideExplicitKey, false))
                             ?.filterVideoSongs(context.dataStore.get(HideVideoSongsKey, false))
                             ?: emptyList()
+                        LogBuffer.log("YouTube.library(FEmusic_liked_videos) 완료 (SONG), ${System.currentTimeMillis() - libStart}ms, songs=${result.size}")
+                        result
                     } catch (e: Exception) {
+                        LogBuffer.log("YouTube.library(FEmusic_liked_videos) 실패 (SONG), ${System.currentTimeMillis() - libStart}ms: ${e.message}")
                         reportException(e)
                         emptyList()
                     }
@@ -325,16 +331,21 @@ constructor(
                 }
 
                 MusicService.ARTIST -> {
+                    val artistStart = System.currentTimeMillis()
+                    LogBuffer.log("YouTube.library(FEmusic_library_corpus_artists) 호출 시작")
                     val artistList: List<ArtistItem> = try {
-                        YouTube.library("FEmusic_library_corpus_artists").completed().getOrNull()
+                        val result = YouTube.library("FEmusic_library_corpus_artists").completed().getOrNull()
                             ?.items?.filterIsInstance<ArtistItem>()
                             ?: emptyList()
+                        LogBuffer.log("YouTube.library(FEmusic_library_corpus_artists) 완료, ${System.currentTimeMillis() - artistStart}ms, artists=${result.size}")
+                        result
                     } catch (e: Exception) {
+                        LogBuffer.log("YouTube.library(FEmusic_library_corpus_artists) 실패, ${System.currentTimeMillis() - artistStart}ms: ${e.message}")
                         reportException(e)
                         emptyList()
                     }
 
-                    android.util.Log.d("PTUBE", "ARTIST count=${artistList.size}, first=${artistList.firstOrNull()?.title}")
+                    LogBuffer.log("ARTIST count=${artistList.size}, first=${artistList.firstOrNull()?.title}")
 
                     artistList.map { artist ->
                         browsableMediaItemWithArtwork(
@@ -450,9 +461,13 @@ constructor(
                         val maxPages = 4
 
                         for (page in 0 until maxPages) {
+                            val homeStart = System.currentTimeMillis()
+                            LogBuffer.log("YouTube.home() 호출 시작 (RECOMMENDED, page=$page)")
                             val result = YouTube.home(continuation)
-                                .onFailure { reportException(it) }
-                                .getOrNull() ?: break
+                                .onFailure { LogBuffer.log("YouTube.home() 실패 (RECOMMENDED, page=$page): ${it.message}"); reportException(it) }
+                                .getOrNull()
+                            LogBuffer.log("YouTube.home() 완료 (RECOMMENDED, page=$page), ${System.currentTimeMillis() - homeStart}ms, sections=${result?.sections?.size ?: -1}")
+                            if (result == null) break
                             allSections.addAll(result.sections)
                             continuation = result.continuation
                             if (continuation == null) break
@@ -467,7 +482,7 @@ constructor(
 
                         lastRecommendedSongs = songs
 
-                        android.util.Log.d("PTUBE", "RECOMMENDED songs count=${songs.size}")
+                        LogBuffer.log("RECOMMENDED songs count=${songs.size}")
 
                         val shuffleItem: MediaItem = MediaItem.Builder()
                             .setMediaId("${MusicService.RECOMMENDED}/${MusicService.SHUFFLE_ACTION}")
@@ -765,6 +780,8 @@ constructor(
                 }
 
                 try {
+                    val searchStart = System.currentTimeMillis()
+                    LogBuffer.log("YouTube.search() 호출 시작 (onGetSearchResult, query=$query)")
                     val onlineResults = YouTube.search(query, YouTube.SearchFilter.FILTER_SONG)
                         .getOrNull()
                         ?.items
@@ -784,6 +801,7 @@ constructor(
                         } ?: emptyList()
 
                     lastSearchSongs = onlineResults
+                    LogBuffer.log("YouTube.search() 완료 (onGetSearchResult), ${System.currentTimeMillis() - searchStart}ms, results=${onlineResults.size}")
 
                     onlineResults.forEach { songItem ->
                         try {
@@ -809,6 +827,7 @@ constructor(
                         )
                     }
                 } catch (e: Exception) {
+                    LogBuffer.log("YouTube.search() 실패 (onGetSearchResult): ${e.message}")
                     reportException(e)
                 }
 
@@ -830,7 +849,7 @@ constructor(
     ): ListenableFuture<MediaItemsWithStartPosition> =
         scope.future {
             val defaultResult = MediaItemsWithStartPosition(emptyList<MediaItem>(), startIndex, startPositionMs)
-            android.util.Log.d("PTUBE", "onSetMediaItems called: mediaId=${mediaItems.firstOrNull()?.mediaId}, count=${mediaItems.size}")
+            LogBuffer.log("onSetMediaItems called: mediaId=${mediaItems.firstOrNull()?.mediaId}, count=${mediaItems.size}")
             val voiceQuery = mediaItems.firstOrNull()?.requestMetadata?.searchQuery
 
             val path = if (!voiceQuery.isNullOrBlank()) {
@@ -930,7 +949,7 @@ constructor(
                                 ?.items?.filterIsInstance<SongItem>()
                                 ?: emptyList()
 
-                            android.util.Log.d("PTUBE", "LIKED playback: ytSongs.size=${ytSongs.size}, songId=$songId, firstTitle=${ytSongs.firstOrNull()?.title}")
+                            LogBuffer.log("LIKED playback: ytSongs.size=${ytSongs.size}, songId=$songId, firstTitle=${ytSongs.firstOrNull()?.title}")
 
                             if (songId == MusicService.SHUFFLE_ACTION) {
                                 MediaItemsWithStartPosition(

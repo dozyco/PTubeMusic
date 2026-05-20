@@ -25,6 +25,7 @@ class CrashHandler private constructor(
     override fun uncaughtException(thread: Thread, throwable: Throwable) {
         try {
             val crashLog = buildCrashLog(throwable)
+            com.metrolist.music.automotive.LogBuffer.log("CRASH on thread '${thread.name}':\n$crashLog")
             Timber.e(throwable, "App crashed")
             
             // Launch crash activity

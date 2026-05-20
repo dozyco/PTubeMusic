@@ -39,6 +39,9 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.material3.OutlinedButton
+import com.metrolist.music.automotive.LogBuffer
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -421,7 +424,6 @@ private fun SettingsScreen(
             // 쿠키 입력 카드: 로그인 안 됐거나 만료됐을 때 노출
             if (!hasCookie || cookieStatus == CookieStatus.EXPIRED) {
                 Spacer(modifier = Modifier.height(16.dp))
-
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     colors = CardDefaults.cardColors(
@@ -552,6 +554,116 @@ private fun SettingsScreen(
                                 fontSize = 16.sp,
                                 fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal
                             )
+                        }
+                    }
+                }
+            }
+
+            // 로그 카드 (차량에서 logcat 대신 사용)
+            Spacer(modifier = Modifier.height(16.dp))
+
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant
+                ),
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(24.dp)
+                ) {
+                    Text(
+                        text = "디버그 로그",
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+
+                    Spacer(modifier = Modifier.height(4.dp))
+
+                    Text(
+                        text = "차량에서 발생한 내부 로그입니다. 아래 '새로고침'을 눌러 최신 상태를 가져오세요.",
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // 로그 라인들을 보관하는 상태. 새로고침 버튼이 LogBuffer 에서 다시 읽어온다.
+                    val logLines = remember { mutableStateListOf<String>().apply { addAll(LogBuffer.getAll()) } }
+
+                    Text(
+                        text = "총 ${logLines.size}줄",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    // 로그 영역: 스크롤 가능한 작은 박스. 최근 줄이 아래로 가도록 그대로 표시.
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(240.dp),
+                        color = MaterialTheme.colorScheme.surface,
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .verticalScroll(rememberScrollState())
+                                .padding(12.dp)
+                        ) {
+                            if (logLines.isEmpty()) {
+                                Text(
+                                    text = "아직 기록된 로그가 없습니다.",
+                                    fontSize = 12.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            } else {
+                                logLines.forEach { line ->
+                                    Text(
+                                        text = line,
+                                        fontSize = 11.sp,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        // 새로고침: 메모리에서 다시 읽어와 화면 갱신
+                        Button(
+                            onClick = {
+                                logLines.clear()
+                                logLines.addAll(LogBuffer.getAll())
+                            },
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(48.dp),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Text(text = "새로고침", fontSize = 14.sp)
+                        }
+
+                        // 비우기: 버퍼와 화면 둘 다 비움
+                        OutlinedButton(
+                            onClick = {
+                                LogBuffer.clear()
+                                logLines.clear()
+                            },
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(48.dp),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Text(text = "비우기", fontSize = 14.sp)
                         }
                     }
                 }
