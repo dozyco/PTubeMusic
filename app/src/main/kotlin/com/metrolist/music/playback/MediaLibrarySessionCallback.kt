@@ -507,17 +507,70 @@ constructor(
                     when {
                         parentId.startsWith("${MusicService.ARTIST}/") -> {
                             val artistId = parentId.removePrefix("${MusicService.ARTIST}/")
+                            val artistFetchStart = System.currentTimeMillis()
+                            LogBuffer.log("YouTube.artist($artistId) 호출 시작")
                             val songs: List<SongItem> = try {
-                                YouTube.artist(artistId).getOrNull()?.sections
+                                val artistPage = YouTube.artist(artistId).getOrNull()
+                                LogBuffer.log("YouTube.artist() 완료, ${System.currentTimeMillis() - artistFetchStart}ms, 섹션 수=${artistPage?.sections?.size ?: -1}")
+
+                                // 1단계: 첫 페이지에서 모든 SongItem 모으기
+                                val firstPageSongs = artistPage?.sections
                                     ?.flatMap { it.items }
                                     ?.filterIsInstance<SongItem>()
-                                    ?.filterExplicit(context.dataStore.get(HideExplicitKey, false))
-                                    ?.filterVideoSongs(context.dataStore.get(HideVideoSongsKey, false))
                                     ?: emptyList()
+                                LogBuffer.log("아티스트 첫 페이지 곡=${firstPageSongs.size}")
+
+                                // 2단계: Songs 섹션의 "더보기" endpoint 찾아서 추가 페이지 받기
+                                val songsSectionEndpoint = artistPage?.sections
+                                    ?.firstOrNull { section ->
+                                        section.items.any { it is SongItem } && section.moreEndpoint != null
+                                    }
+                                    ?.moreEndpoint
+
+                                val moreSongs = mutableListOf<SongItem>()
+                                if (songsSectionEndpoint != null) {
+                                    try {
+                                        val moreStart = System.currentTimeMillis()
+                                        LogBuffer.log("YouTube.artistItems() 호출 시작 (더보기)")
+                                        val firstMorePage = YouTube.artistItems(songsSectionEndpoint).getOrNull()
+                                        LogBuffer.log("YouTube.artistItems() 완료, ${System.currentTimeMillis() - moreStart}ms, items=${firstMorePage?.items?.size ?: -1}")
+
+                                        firstMorePage?.items?.filterIsInstance<SongItem>()?.let { moreSongs.addAll(it) }
+
+                                        // continuation 이 있으면 한 페이지 더 (최대 2페이지로 제한)
+                                        var continuation = firstMorePage?.continuation
+                                        var pageCount = 0
+                                        val maxContinuationPages = 2
+                                        while (continuation != null && pageCount < maxContinuationPages) {
+                                            val contStart = System.currentTimeMillis()
+                                            LogBuffer.log("YouTube.artistItemsContinuation() 호출 시작 (page=${pageCount + 1})")
+                                            val contPage = YouTube.artistItemsContinuation(continuation).getOrNull()
+                                            LogBuffer.log("YouTube.artistItemsContinuation() 완료, ${System.currentTimeMillis() - contStart}ms, items=${contPage?.items?.size ?: -1}")
+                                            if (contPage == null) break
+                                            contPage.items.filterIsInstance<SongItem>().let { moreSongs.addAll(it) }
+                                            continuation = contPage.continuation
+                                            pageCount++
+                                        }
+                                    } catch (e: Exception) {
+                                        LogBuffer.log("artistItems 호출 실패: ${e.message}")
+                                        reportException(e)
+                                    }
+                                } else {
+                                    LogBuffer.log("Songs 섹션의 moreEndpoint 없음 - 추가 곡 불러오기 생략")
+                                }
+
+                                // 3단계: 합치고 중복 제거, 필터 적용
+                                (firstPageSongs + moreSongs)
+                                    .distinctBy { it.id }
+                                    .filterExplicit(context.dataStore.get(HideExplicitKey, false))
+                                    .filterVideoSongs(context.dataStore.get(HideVideoSongsKey, false))
                             } catch (e: Exception) {
+                                LogBuffer.log("ARTIST 분기 전체 실패: ${e.message}")
                                 reportException(e)
                                 emptyList()
                             }
+
+                            LogBuffer.log("아티스트($artistId) 곡 개수: ${songs.size}, 첫 곡=${songs.firstOrNull()?.title}")
 
                             val shuffleItem: MediaItem = MediaItem.Builder()
                                 .setMediaId("$parentId/${MusicService.SHUFFLE_ACTION}")
@@ -889,10 +942,43 @@ constructor(
                     val songId = path.getOrNull(2) ?: return@future defaultResult
                     val artistId = path.getOrNull(1) ?: return@future defaultResult
                     try {
-                        val ytSongs: List<SongItem> = YouTube.artist(artistId).getOrNull()?.sections
+                        LogBuffer.log("재생용 ARTIST 곡 가져오기 시작: artistId=$artistId")
+                        val artistPage = YouTube.artist(artistId).getOrNull()
+                        val firstPageSongs = artistPage?.sections
                             ?.flatMap { it.items }
                             ?.filterIsInstance<SongItem>()
                             ?: emptyList()
+
+                        val songsSectionEndpoint = artistPage?.sections
+                            ?.firstOrNull { section ->
+                                section.items.any { it is SongItem } && section.moreEndpoint != null
+                            }
+                            ?.moreEndpoint
+
+                        val moreSongs = mutableListOf<SongItem>()
+                        if (songsSectionEndpoint != null) {
+                            try {
+                                val firstMorePage = YouTube.artistItems(songsSectionEndpoint).getOrNull()
+                                firstMorePage?.items?.filterIsInstance<SongItem>()?.let { moreSongs.addAll(it) }
+
+                                var continuation = firstMorePage?.continuation
+                                var pageCount = 0
+                                val maxContinuationPages = 2
+                                while (continuation != null && pageCount < maxContinuationPages) {
+                                    val contPage = YouTube.artistItemsContinuation(continuation).getOrNull()
+                                    if (contPage == null) break
+                                    contPage.items.filterIsInstance<SongItem>().let { moreSongs.addAll(it) }
+                                    continuation = contPage.continuation
+                                    pageCount++
+                                }
+                            } catch (e: Exception) {
+                                LogBuffer.log("재생용 artistItems 호출 실패: ${e.message}")
+                                reportException(e)
+                            }
+                        }
+
+                        val ytSongs: List<SongItem> = (firstPageSongs + moreSongs).distinctBy { it.id }
+                        LogBuffer.log("재생용 ARTIST 최종 곡 수=${ytSongs.size}")
 
                         if (songId == MusicService.SHUFFLE_ACTION) {
                             MediaItemsWithStartPosition(
