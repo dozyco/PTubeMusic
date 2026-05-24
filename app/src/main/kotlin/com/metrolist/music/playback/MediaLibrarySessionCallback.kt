@@ -220,6 +220,28 @@ constructor(
     ): ListenableFuture<LibraryResult<ImmutableList<MediaItem>>> =
         scope.future(Dispatchers.IO) {
             LogBuffer.log("onGetChildren: parentId=$parentId")
+
+            // 차량 시동 직후엔 player나 네트워크가 아직 준비 안 됐을 수 있다.
+            // 최대 5초까지 짧은 대기 후 진행. 그래도 준비 안 되면 ofError 반환.
+            val waitStart = System.currentTimeMillis()
+            val maxWaitMs = 5000L
+            val pollIntervalMs = 200L
+            while (System.currentTimeMillis() - waitStart < maxWaitMs) {
+                val playerReady = service.isPlayerReady.value
+                val networkReady = service.isNetworkConnected.value
+                if (playerReady && networkReady) break
+                kotlinx.coroutines.delay(pollIntervalMs)
+            }
+            val waited = System.currentTimeMillis() - waitStart
+            val finalPlayerReady = service.isPlayerReady.value
+            val finalNetworkReady = service.isNetworkConnected.value
+            LogBuffer.log("onGetChildren 준비 대기 종료: ${waited}ms, player=$finalPlayerReady, network=$finalNetworkReady")
+
+            if (!finalPlayerReady || !finalNetworkReady) {
+                LogBuffer.log("onGetChildren: 준비 안 됨 → ofError 반환 (parentId=$parentId)")
+                return@future LibraryResult.ofError(SessionError.ERROR_SESSION_DISCONNECTED)
+            }
+
             val items: List<MediaItem> = when (parentId) {
                 MusicService.ROOT -> {
                     val sectionsRaw = context.dataStore.get(
@@ -623,14 +645,53 @@ constructor(
 
                             if (playlistId == PlaylistEntity.LIKED_PLAYLIST_ID) {
                                 val songs: List<SongItem> = try {
-                                    YouTube.library("FEmusic_liked_videos").completed().getOrNull()
-                                        ?.items?.filterIsInstance<SongItem>()
-                                        ?.filterExplicit(context.dataStore.get(HideExplicitKey, false))
-                                        ?.filterVideoSongs(context.dataStore.get(HideVideoSongsKey, false))
+                                    val lmStart = System.currentTimeMillis()
+                                    val lmSongs = YouTube.playlist("LM").completed().getOrNull()
+                                        ?.songs
                                         ?: emptyList()
+                                    LogBuffer.log("LIKED: playlist('LM').completed() → ${lmSongs.size}개, ${System.currentTimeMillis() - lmStart}ms")
+
+                                    val afterExplicit = lmSongs.filterExplicit(context.dataStore.get(HideExplicitKey, false))
+                                    val afterVideoSongs = afterExplicit.filterVideoSongs(context.dataStore.get(HideVideoSongsKey, false))
+                                    LogBuffer.log("LIKED: 필터 후 ${afterVideoSongs.size}개")
+
+                                    afterVideoSongs
                                 } catch (e: Exception) {
                                     reportException(e)
+                                    LogBuffer.log("LIKED 가져오기 실패: ${e.message}")
                                     emptyList()
+                                }
+
+                                // 양방향 풀 동기화: YouTube 서버의 좋아요 목록을 로컬 DB의 진실로 만듦.
+                                // 1) 서버 목록에 있는 곡 → DB에 insert + liked=true
+                                // 2) 서버 목록에 없는데 DB에 liked=true 인 곡 → liked=false (지금은 비활성화)
+                                val syncStart = System.currentTimeMillis()
+                                try {
+                                    val serverLikedIds = songs.map { it.id }.toSet()
+                                    LogBuffer.log("LIKED 동기화 시작: 서버 곡 ${serverLikedIds.size}개")
+
+                                    // 1단계: 서버 목록의 곡을 DB에 insert + liked=true
+                                    var addedCount = 0
+                                    songs.forEach { songItem ->
+                                        try {
+                                            database.query { insert(songItem.toMediaMetadata()) }
+                                            val existing = database.song(songItem.id).first()
+                                            if (existing != null && existing.song.liked != true) {
+                                                database.query {
+                                                    update(existing.song.copy(liked = true))
+                                                }
+                                                addedCount++
+                                            }
+                                        } catch (e: Exception) {
+                                            LogBuffer.log("LIKED 동기화 insert 실패: id=${songItem.id}, ${e.message}")
+                                        }
+                                    }
+                                    LogBuffer.log("LIKED 동기화 1단계 완료: liked=true 갱신 $addedCount 곡, ${System.currentTimeMillis() - syncStart}ms")
+
+                                    // 2단계 비활성화: YouTube API 응답이 폰과 다를 수 있어 위험
+                                    LogBuffer.log("LIKED 동기화 2단계 비활성화됨")
+                                } catch (e: Exception) {
+                                    LogBuffer.log("LIKED 동기화 전체 실패: ${e.message}")
                                 }
 
                                 val shuffleItem: MediaItem = MediaItem.Builder()
@@ -783,7 +844,21 @@ constructor(
         query: String,
         params: MediaLibraryService.LibraryParams?
     ): ListenableFuture<LibraryResult<Void>> {
-        session.notifySearchResultChanged(browser, query, 1, params)
+        scope.future(Dispatchers.IO) {
+            try {
+                LogBuffer.log("onSearch 호출됨: query=$query")
+                val onlineResults = YouTube.search(query, YouTube.SearchFilter.FILTER_SONG)
+                    .getOrNull()
+                    ?.items
+                    ?.filterIsInstance<SongItem>()
+                    ?: emptyList()
+                LogBuffer.log("onSearch: ${onlineResults.size}개 결과")
+                session.notifySearchResultChanged(browser, query, onlineResults.size, params)
+            } catch (e: Exception) {
+                LogBuffer.log("onSearch 실패: ${e.message}")
+                session.notifySearchResultChanged(browser, query, 0, params)
+            }
+        }
         return Futures.immediateFuture(LibraryResult.ofVoid())
     }
 
@@ -853,10 +928,31 @@ constructor(
                             }
                         } ?: emptyList()
 
-                    lastSearchSongs = onlineResults
+                    // 화면에 표시되는 순서대로 로컬 + 온라인 합쳐서 캐싱
+                    // (onSetMediaItems 에서 클릭한 곡 찾을 때 사용)
+                    val localAsSongItems = allLocalSongs.mapNotNull { dbSong ->
+                        // 로컬 DB의 Song 을 SongItem 으로 변환
+                        try {
+                            com.metrolist.innertube.models.SongItem(
+                                id = dbSong.id,
+                                title = dbSong.song.title,
+                                artists = dbSong.artists.map { artist ->
+                                    com.metrolist.innertube.models.Artist(name = artist.name, id = artist.id)
+                                },
+                                album = null,
+                                duration = null,
+                                thumbnail = dbSong.song.thumbnailUrl ?: "",
+                            )
+                        } catch (e: Exception) {
+                            null
+                        }
+                    }
+                    lastSearchSongs = localAsSongItems + onlineResults
+                    LogBuffer.log("SEARCH lastSearchSongs 저장: 로컬=${localAsSongItems.size}, 온라인=${onlineResults.size}, 총=${lastSearchSongs.size}")
                     LogBuffer.log("YouTube.search() 완료 (onGetSearchResult), ${System.currentTimeMillis() - searchStart}ms, results=${onlineResults.size}")
 
-                    onlineResults.forEach { songItem ->
+                    onlineResults.forEachIndexed { idx, songItem ->
+                        LogBuffer.log("SEARCH onGetSearchResult[$idx]: id=${songItem.id}, title=${songItem.title}")
                         try {
                             database.query { insert(songItem.toMediaMetadata()) }
                         } catch (e: Exception) {
@@ -1031,11 +1127,31 @@ constructor(
 
                     if (playlistId == PlaylistEntity.LIKED_PLAYLIST_ID) {
                         return@future try {
-                            val ytSongs: List<SongItem> = YouTube.library("FEmusic_liked_videos").completed().getOrNull()
-                                ?.items?.filterIsInstance<SongItem>()
+                            val ytSongs: List<SongItem> = YouTube.playlist("LM").completed().getOrNull()
+                                ?.songs
                                 ?: emptyList()
-
                             LogBuffer.log("LIKED playback: ytSongs.size=${ytSongs.size}, songId=$songId, firstTitle=${ytSongs.firstOrNull()?.title}")
+                            // 진단: 클릭한 곡이 로컬 DB에 있는지, liked 값이 뭔지 확인
+                            try {
+                                val targetSongId = if (songId == MusicService.SHUFFLE_ACTION) {
+                                    ytSongs.firstOrNull()?.id
+                                } else {
+                                    songId
+                                }
+                                if (targetSongId != null) {
+                                    val dbSong = database.song(targetSongId).first()
+                                    if (dbSong == null) {
+                                        LogBuffer.log("LIKED 진단: targetId=$targetSongId, DB에 없음")
+                                    } else {
+                                        LogBuffer.log("LIKED 진단: targetId=$targetSongId, DB에 있음, liked=${dbSong.song.liked}, title=${dbSong.song.title}")
+                                    }
+                                } else {
+                                    LogBuffer.log("LIKED 진단: targetSongId가 null")
+                                }
+                            } catch (e: Exception) {
+                                LogBuffer.log("LIKED 진단 실패: ${e.message}")
+                            }
+
 
                             if (songId == MusicService.SHUFFLE_ACTION) {
                                 MediaItemsWithStartPosition(
@@ -1199,7 +1315,8 @@ constructor(
                                 }
                             } ?: emptyList()
 
-                        onlineResults.forEach { songItem ->
+                        onlineResults.forEachIndexed { idx, songItem ->
+                            LogBuffer.log("SEARCH 결과[$idx]: id=${songItem.id}, title=${songItem.title}")
                             try {
                                 database.query { insert(songItem.toMediaMetadata()) }
                                 database.song(songItem.id).first()?.let { newSong ->

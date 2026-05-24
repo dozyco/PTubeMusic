@@ -300,7 +300,7 @@ class MusicService :
     private lateinit var connectivityManager: ConnectivityManager
     lateinit var connectivityObserver: NetworkConnectivityObserver
     val waitingForNetworkConnection = MutableStateFlow(false)
-    private val isNetworkConnected = MutableStateFlow(false)
+    val isNetworkConnected = MutableStateFlow(false)
 
     private lateinit var audioQuality: com.metrolist.music.constants.AudioQuality
 
@@ -1829,9 +1829,15 @@ class MusicService :
     }
 
     fun toggleLike() {
+        com.metrolist.music.automotive.LogBuffer.log("toggleLike() 호출됨")
         scope.launch {
             val songToToggle = currentSong.first()
-            songToToggle?.let { librarySong ->
+            com.metrolist.music.automotive.LogBuffer.log("toggleLike: currentSong=${songToToggle?.song?.id}, title=${songToToggle?.song?.title}, liked=${songToToggle?.song?.liked}")
+            if (songToToggle == null) {
+                com.metrolist.music.automotive.LogBuffer.log("toggleLike: currentSong이 null이라 아무 동작 안 함")
+                return@launch
+            }
+            songToToggle.let { librarySong ->
                 val songEntity = librarySong.song
 
                 // For podcast episodes, toggle save for later instead of like
@@ -1840,10 +1846,13 @@ class MusicService :
                     return@let
                 }
 
+                com.metrolist.music.automotive.LogBuffer.log("toggleLike: 토글 시작, 현재 liked=${songEntity.liked} → 새 liked=${!songEntity.liked}")
+
                 val song = songEntity.toggleLike()
                 database.query {
                     update(song)
                     syncUtils.likeSong(song)
+                    com.metrolist.music.automotive.LogBuffer.log("toggleLike: syncUtils.likeSong() 호출 완료, songId=${song.id}, liked=${song.liked}")
 
                     // Check if auto-download on like is enabled and the song is now liked
                     if (dataStore.get(AutoDownloadOnLikeKey, false) && song.liked) {

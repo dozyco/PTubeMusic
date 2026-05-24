@@ -699,9 +699,34 @@ private fun SettingsScreen(
 
                     Spacer(modifier = Modifier.height(16.dp))
 
-                    InfoRow(label = "앱 이름", value = "PTubeMusic")
-                    Spacer(modifier = Modifier.height(8.dp))
                     InfoRow(label = "버전", value = BuildConfig.VERSION_NAME)
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    Text(
+                        text = "오픈소스 정보",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    InfoRow(label = "기반 프로젝트", value = "Metrolist")
+                    Spacer(modifier = Modifier.height(8.dp))
+                    InfoRow(label = "원본 저장소", value = "github.com/mostafaalagamy/Metrolist")
+                    Spacer(modifier = Modifier.height(8.dp))
+                    InfoRow(label = "라이선스", value = "GPL-3.0")
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    Text(
+                        text = "이 앱은 폴 오픈소스 프로젝트 Metrolist를 폴스타4 환경에 맞게 수정한 비공식 버전입니다. 수정된 소스 코드는 요청 시 제공됩니다. Claude AI를 이용하여 수정하였으며 언제든지 앱 작동이 안될 가능성이 있습니다.",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        lineHeight = 16.sp
+                    )
+
                     Spacer(modifier = Modifier.height(8.dp))
                 }
             }
@@ -709,9 +734,10 @@ private fun SettingsScreen(
             Spacer(modifier = Modifier.height(32.dp))
 
             Text(
-                text = "더 많은 설정은 휴대폰 앱에서 가능합니다",
-                fontSize = 12.sp,
-                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
+                text = "한국 폴스타4 오너를 위하여 만들었습니다. 네이버 폴스타 동호회 폴스타 클루부 by염발 ",
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onBackground,
                 modifier = Modifier.fillMaxWidth(),
             )
         }
