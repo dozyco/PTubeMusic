@@ -1936,15 +1936,17 @@ class MusicService :
 
     private fun applyCachedLoudnessEnhancerNow() {
         val enhancer = loudnessEnhancer ?: return
-
         try {
+            val baseBoost = 500 // 기본 부스트 +5 dB (PTubeMusic 전체 음량 부스트)
             val gain = cachedNormalizationGainMb
-
             if (cachedNormalizationEnabled && gain != null) {
-                enhancer.setTargetGain(gain)
+                // normalization 켜져 있으면: normalization 게인 + 기본 부스트 합산
+                enhancer.setTargetGain(gain + baseBoost)
                 enhancer.enabled = true
             } else {
-                enhancer.enabled = false
+                // normalization 꺼져 있어도 기본 부스트는 적용
+                enhancer.setTargetGain(baseBoost)
+                enhancer.enabled = true
             }
         } catch (e: Exception) {
             reportException(e)

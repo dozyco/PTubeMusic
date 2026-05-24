@@ -250,7 +250,6 @@ constructor(
                     )
                     val sections = listOf(
                         AndroidAutoSection.LIKED to true,
-                        AndroidAutoSection.SONGS to true,
                         AndroidAutoSection.ARTISTS to true,
                         AndroidAutoSection.RECOMMENDED to true,
                     )
@@ -495,30 +494,32 @@ constructor(
                             if (continuation == null) break
                         }
 
+                        // 추천 페이지의 PlaylistItem (믹스/플레이리스트) 모으기
+                        val playlists = allSections
+                            .flatMap { it.items }
+                            .filterIsInstance<PlaylistItem>()
+                            .distinctBy { it.id }
+                        LogBuffer.log("RECOMMENDED playlists count=${playlists.size}")
+
+                        // lastRecommendedSongs 는 곡 캐싱 (재생용으로 다른 곳에서 쓰일 수 있어 유지)
                         val songs = allSections
                             .flatMap { it.items }
                             .filterIsInstance<SongItem>()
                             .filterExplicit(context.dataStore.get(HideExplicitKey, false))
                             .filterVideoSongs(context.dataStore.get(HideVideoSongsKey, false))
                             .distinctBy { it.id }
-
                         lastRecommendedSongs = songs
 
-                        LogBuffer.log("RECOMMENDED songs count=${songs.size}")
-
-                        val shuffleItem: MediaItem = MediaItem.Builder()
-                            .setMediaId("${MusicService.RECOMMENDED}/${MusicService.SHUFFLE_ACTION}")
-                            .setMediaMetadata(
-                                MediaMetadata.Builder()
-                                    .setTitle(context.getString(R.string.shuffle))
-                                    .setArtworkUri(drawableUri(R.drawable.shuffle))
-                                    .setIsPlayable(true)
-                                    .setIsBrowsable(false)
-                                    .setMediaType(MediaMetadata.MEDIA_TYPE_MUSIC)
-                                    .build()
-                            ).build()
-
-                        listOf(shuffleItem) + songs.map { it.toCarMediaItem(MusicService.RECOMMENDED) }
+                        // 각 플레이리스트를 browsable MediaItem 으로 (클릭 시 그 안의 곡 표시)
+                        playlists.map { playlist ->
+                            browsableMediaItemWithArtwork(
+                                "${MusicService.YOUTUBE_PLAYLIST}/${playlist.id}",
+                                playlist.title,
+                                playlist.author?.name,
+                                playlist.thumbnail,
+                                MediaMetadata.MEDIA_TYPE_PLAYLIST,
+                            )
+                        }
                     } catch (e: Exception) {
                         reportException(e)
                         emptyList()
@@ -876,119 +877,140 @@ constructor(
             }
 
             try {
-                val searchResults = mutableListOf<MediaItem>()
+                LogBuffer.log("onGetSearchResult: query=$query")
+                val searchStart = System.currentTimeMillis()
 
-                val localSongs = database.allSongs().first().filter { song ->
-                    song.song.title.contains(query, ignoreCase = true) ||
-                            song.artists.any { it.name.contains(query, ignoreCase = true) } ||
-                            song.album?.title?.contains(query, ignoreCase = true) == true
-                }
+                // 1. searchSummary 로 Top result 받기
+                val summaryPage = YouTube.searchSummary(query).getOrNull()
+                val topResultItems = summaryPage?.summaries
+                    ?.firstOrNull { it.title.contains("Top", ignoreCase = true) || it.title.contains("최상", ignoreCase = true) }
+                    ?.items
+                    ?: emptyList()
+                LogBuffer.log("Top result: ${topResultItems.size}개")
 
-                val artistSongs = database.searchArtists(query).first().flatMap { artist ->
-                    database.artistSongsByCreateDateAsc(artist.id).first()
-                }
+                // 2. 카테고리별 검색 병렬 호출 (각 필터로)
+                val songsResult = YouTube.search(query, YouTube.SearchFilter.FILTER_SONG).getOrNull()
+                    ?.items?.filterIsInstance<SongItem>()
+                    ?.filterExplicit(context.dataStore.get(HideExplicitKey, false))
+                    ?.filterVideoSongs(context.dataStore.get(HideVideoSongsKey, false))
+                    ?: emptyList()
+                LogBuffer.log("Songs: ${songsResult.size}개")
 
-                val albumSongs = database.searchAlbums(query).first().flatMap { album ->
-                    database.albumSongs(album.id).first()
-                }
+                val albumsResult = YouTube.search(query, YouTube.SearchFilter.FILTER_ALBUM).getOrNull()
+                    ?.items?.filterIsInstance<AlbumItem>()
+                    ?: emptyList()
+                LogBuffer.log("Albums: ${albumsResult.size}개")
 
-                val playlistSongs = database.searchPlaylists(query).first().flatMap { playlist ->
-                    database.playlistSongs(playlist.id).first().map { it.song }
-                }
+                val artistsResult = YouTube.search(query, YouTube.SearchFilter.FILTER_ARTIST).getOrNull()
+                    ?.items?.filterIsInstance<ArtistItem>()
+                    ?: emptyList()
+                LogBuffer.log("Artists: ${artistsResult.size}개")
 
-                val allLocalSongs = (localSongs + artistSongs + albumSongs + playlistSongs)
-                    .distinctBy { it.id }
+                val videosResult = YouTube.search(query, YouTube.SearchFilter.FILTER_VIDEO).getOrNull()
+                    ?.items?.filterIsInstance<SongItem>()
+                    ?.filterExplicit(context.dataStore.get(HideExplicitKey, false))
+                    ?: emptyList()
+                LogBuffer.log("Videos: ${videosResult.size}개")
 
-                allLocalSongs.forEach { song ->
-                    searchResults.add(song.toMediaItem(
-                        path = "${MusicService.SEARCH}/$query",
-                        isPlayable = true,
-                        isBrowsable = false
-                    ))
-                }
+                LogBuffer.log("카테고리별 검색 완료: ${System.currentTimeMillis() - searchStart}ms")
 
-                try {
-                    val searchStart = System.currentTimeMillis()
-                    LogBuffer.log("YouTube.search() 호출 시작 (onGetSearchResult, query=$query)")
-                    val onlineResults = YouTube.search(query, YouTube.SearchFilter.FILTER_SONG)
-                        .getOrNull()
-                        ?.items
-                        ?.filterIsInstance<SongItem>()
-                        ?.filterExplicit(context.dataStore.get(HideExplicitKey, false))
-                        ?.filterVideoSongs(context.dataStore.get(HideVideoSongsKey, false))
-                        ?.filter { onlineSong ->
-                            !allLocalSongs.any { localSong ->
-                                localSong.id == onlineSong.id ||
-                                        (localSong.song.title.equals(onlineSong.title, ignoreCase = true) &&
-                                                localSong.artists.any { artist ->
-                                                    onlineSong.artists.any {
-                                                        it.name.equals(artist.name, ignoreCase = true)
-                                                    }
-                                                })
-                            }
-                        } ?: emptyList()
+                // 3. 각 섹션을 그룹 hint 박아서 합치기
+                val items = mutableListOf<MediaItem>()
+                val allSongs = mutableListOf<SongItem>()
 
-                    // 화면에 표시되는 순서대로 로컬 + 온라인 합쳐서 캐싱
-                    // (onSetMediaItems 에서 클릭한 곡 찾을 때 사용)
-                    val localAsSongItems = allLocalSongs.mapNotNull { dbSong ->
-                        // 로컬 DB의 Song 을 SongItem 으로 변환
-                        try {
-                            com.metrolist.innertube.models.SongItem(
-                                id = dbSong.id,
-                                title = dbSong.song.title,
-                                artists = dbSong.artists.map { artist ->
-                                    com.metrolist.innertube.models.Artist(name = artist.name, id = artist.id)
-                                },
-                                album = null,
-                                duration = null,
-                                thumbnail = dbSong.song.thumbnailUrl ?: "",
+                fun addItem(ytItem: Any, groupHint: String) {
+                    val mediaId: String
+                    val itemTitle: String
+                    val itemSubtitle: String?
+                    val itemThumbnail: String?
+                    val isPlayable: Boolean
+                    val isBrowsable: Boolean
+                    val mediaType: Int
+
+                    when (ytItem) {
+                        is SongItem -> {
+                            mediaId = "${MusicService.SEARCH}/$query/${ytItem.id}"
+                            itemTitle = ytItem.title
+                            itemSubtitle = ytItem.artists.joinToString(", ") { it.name }
+                            itemThumbnail = ytItem.thumbnail
+                            isPlayable = true
+                            isBrowsable = false
+                            mediaType = MediaMetadata.MEDIA_TYPE_MUSIC
+                            allSongs.add(ytItem)
+                        }
+                        is AlbumItem -> {
+                            mediaId = "${MusicService.ALBUM}/${ytItem.browseId}"
+                            itemTitle = ytItem.title
+                            itemSubtitle = ytItem.artists?.joinToString(", ") { it.name }
+                            itemThumbnail = ytItem.thumbnail
+                            isPlayable = false
+                            isBrowsable = true
+                            mediaType = MediaMetadata.MEDIA_TYPE_ALBUM
+                        }
+                        is ArtistItem -> {
+                            mediaId = "${MusicService.ARTIST}/${ytItem.id}"
+                            itemTitle = ytItem.title
+                            itemSubtitle = null
+                            itemThumbnail = ytItem.thumbnail
+                            isPlayable = false
+                            isBrowsable = true
+                            mediaType = MediaMetadata.MEDIA_TYPE_ARTIST
+                        }
+                        is PlaylistItem -> {
+                            mediaId = "${MusicService.YOUTUBE_PLAYLIST}/${ytItem.id}"
+                            itemTitle = ytItem.title
+                            itemSubtitle = ytItem.author?.name
+                            itemThumbnail = ytItem.thumbnail
+                            isPlayable = false
+                            isBrowsable = true
+                            mediaType = MediaMetadata.MEDIA_TYPE_PLAYLIST
+                        }
+                        else -> return
+                    }
+
+                    val extras = android.os.Bundle().apply {
+                        putString("android.media.browse.CONTENT_STYLE_GROUP_TITLE_HINT", groupHint)
+                    }
+
+                    items.add(
+                        MediaItem.Builder()
+                            .setMediaId(mediaId)
+                            .setMediaMetadata(
+                                MediaMetadata.Builder()
+                                    .setTitle(itemTitle)
+                                    .setSubtitle(itemSubtitle)
+                                    .setArtist(itemSubtitle)
+                                    .setArtworkUri(itemThumbnail?.toUri()?.let { AlbumArtContentProvider.mapUri(it) })
+                                    .setIsPlayable(isPlayable)
+                                    .setIsBrowsable(isBrowsable)
+                                    .setMediaType(mediaType)
+                                    .setExtras(extras)
+                                    .build()
                             )
-                        } catch (e: Exception) {
-                            null
-                        }
-                    }
-                    lastSearchSongs = localAsSongItems + onlineResults
-                    LogBuffer.log("SEARCH lastSearchSongs 저장: 로컬=${localAsSongItems.size}, 온라인=${onlineResults.size}, 총=${lastSearchSongs.size}")
-                    LogBuffer.log("YouTube.search() 완료 (onGetSearchResult), ${System.currentTimeMillis() - searchStart}ms, results=${onlineResults.size}")
-
-                    onlineResults.forEachIndexed { idx, songItem ->
-                        LogBuffer.log("SEARCH onGetSearchResult[$idx]: id=${songItem.id}, title=${songItem.title}")
-                        try {
-                            database.query { insert(songItem.toMediaMetadata()) }
-                        } catch (e: Exception) {
-                        }
-
-                        searchResults.add(
-                            MediaItem.Builder()
-                                .setMediaId("${MusicService.SEARCH}/$query/${songItem.id}")
-                                .setMediaMetadata(
-                                    MediaMetadata.Builder()
-                                        .setTitle(songItem.title)
-                                        .setSubtitle(songItem.artists.joinToString(", ") { it.name })
-                                        .setArtist(songItem.artists.joinToString(", ") { it.name })
-                                        .setArtworkUri(songItem.thumbnail.toUri().let { AlbumArtContentProvider.mapUri(it) })
-                                        .setIsPlayable(true)
-                                        .setIsBrowsable(false)
-                                        .setMediaType(MediaMetadata.MEDIA_TYPE_MUSIC)
-                                        .build()
-                                )
-                                .build()
-                        )
-                    }
-                } catch (e: Exception) {
-                    LogBuffer.log("YouTube.search() 실패 (onGetSearchResult): ${e.message}")
-                    reportException(e)
+                            .build()
+                    )
                 }
 
-                LibraryResult.ofItemList(searchResults, params)
+                // 순서대로 추가: Top result → Songs → Albums → Artists → Videos
+                topResultItems.forEach { addItem(it, "Top result") }
+                songsResult.forEach { addItem(it, "Songs") }
+                albumsResult.forEach { addItem(it, "Albums") }
+                artistsResult.forEach { addItem(it, "Artists") }
+                videosResult.forEach { addItem(it, "Videos") }
+
+                lastSearchSongs = allSongs.distinctBy { it.id }
+                LogBuffer.log("SEARCH lastSearchSongs 저장: 총 ${lastSearchSongs.size}곡")
+                LogBuffer.log("SEARCH items 총 ${items.size}개")
+
+                LibraryResult.ofItemList(items, params)
 
             } catch (e: Exception) {
+                LogBuffer.log("onGetSearchResult 실패: ${e.message}")
                 reportException(e)
                 LibraryResult.ofItemList(emptyList<MediaItem>(), params)
             }
         }
     }
-
     override fun onSetMediaItems(
         mediaSession: MediaSession,
         controller: MediaSession.ControllerInfo,
