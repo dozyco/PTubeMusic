@@ -13,6 +13,7 @@ PTubeMusic 은 **Polestar 4 (Android Automotive OS)** 차량에서 사용 가능
 
 오픈소스 [Metrolist](https://github.com/mostafaalagamy/Metrolist) 프로젝트를 기반으로 차량 환경에 맞춰 수정/추가 작업했습니다.
 
+모든 작업은 클로드 AI를 이용하여 수정했습니다.
 ## 주요 기능
 
 - **차량 친화 UI** — AAOS 미디어 브라우저 인터페이스 지원
@@ -86,6 +87,7 @@ PTubeMusic 은 쿠키 만료를 자동 감지합니다. 만료 시 알림이 뜨
 - **비공식 앱입니다.** YouTube/Google 과 무관합니다.
 - 사용은 **본인 책임** 하에 하세요.
 - 광고 차단/우회 목적이 아니며, **YouTube Premium**를 가입하지 않으면 앱이 작동하지 않습니다.
+- 언제든지 앱 작동이 되지 않을수 있습니다.
 
 ## 라이선스
 
