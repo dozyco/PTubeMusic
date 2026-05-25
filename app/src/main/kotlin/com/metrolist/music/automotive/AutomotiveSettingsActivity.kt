@@ -268,7 +268,21 @@ private fun SettingsScreen(
             cookieStatus = if (result.isSuccess) {
                 CookieStatus.VALID
             } else {
-                CookieStatus.EXPIRED
+                // 실패 원인 구분: 진짜 인증 에러 (401/403) 일 때만 EXPIRED 로 판정.
+                // 네트워크 에러, 타임아웃, 기타는 VALID 유지 (쿠키 자체는 멀쩡할 가능성 높음).
+                val error = result.exceptionOrNull()
+                val errorMessage = error?.message?.lowercase() ?: ""
+                val isAuthError = errorMessage.contains("401") ||
+                        errorMessage.contains("403") ||
+                        errorMessage.contains("unauthorized") ||
+                        errorMessage.contains("forbidden")
+                LogBuffer.log("쿠키 검증 실패: isAuthError=$isAuthError, message=${error?.message}")
+                if (isAuthError) {
+                    CookieStatus.EXPIRED
+                } else {
+                    // 네트워크 에러 등 → 일단 VALID 로 유지 (쿠키 만료라고 잘못 표시 안 함)
+                    CookieStatus.VALID
+                }
             }
         } else {
             cookieStatus = CookieStatus.NONE
