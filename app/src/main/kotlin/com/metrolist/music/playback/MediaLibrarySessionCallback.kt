@@ -72,6 +72,7 @@ import kotlinx.coroutines.plus
 import javax.inject.Inject
 import com.metrolist.music.automotive.AlbumArtContentProvider
 import com.metrolist.music.automotive.LogBuffer
+import kotlinx.coroutines.withTimeoutOrNull
 
 class MediaLibrarySessionCallback
 @Inject
@@ -321,11 +322,16 @@ constructor(
                     val libStart = System.currentTimeMillis()
                     LogBuffer.log("YouTube.library(FEmusic_liked_videos) 호출 시작 (SONG)")
                     val songs: List<SongItem> = try {
-                        val result = YouTube.library("FEmusic_liked_videos").completed().getOrNull()
-                            ?.items?.filterIsInstance<SongItem>()
-                            ?.filterExplicit(context.dataStore.get(HideExplicitKey, false))
-                            ?.filterVideoSongs(context.dataStore.get(HideVideoSongsKey, false))
-                            ?: emptyList()
+                        val result = withTimeoutOrNull(10_000) {
+                            YouTube.library("FEmusic_liked_videos").completed().getOrNull()
+                                ?.items?.filterIsInstance<SongItem>()
+                                ?.filterExplicit(context.dataStore.get(HideExplicitKey, false))
+                                ?.filterVideoSongs(context.dataStore.get(HideVideoSongsKey, false))
+                                ?: emptyList()
+                        } ?: run {
+                            LogBuffer.log("YouTube.library(SONG) 타임아웃 (10초)")
+                            emptyList()
+                        }
                         LogBuffer.log("YouTube.library(FEmusic_liked_videos) 완료 (SONG), ${System.currentTimeMillis() - libStart}ms, songs=${result.size}")
                         result
                     } catch (e: Exception) {
@@ -355,9 +361,14 @@ constructor(
                     val artistStart = System.currentTimeMillis()
                     LogBuffer.log("YouTube.library(FEmusic_library_corpus_artists) 호출 시작")
                     val artistList: List<ArtistItem> = try {
-                        val result = YouTube.library("FEmusic_library_corpus_artists").completed().getOrNull()
-                            ?.items?.filterIsInstance<ArtistItem>()
-                            ?: emptyList()
+                        val result = withTimeoutOrNull(10_000) {
+                            YouTube.library("FEmusic_library_corpus_artists").completed().getOrNull()
+                                ?.items?.filterIsInstance<ArtistItem>()
+                                ?: emptyList()
+                        } ?: run {
+                            LogBuffer.log("YouTube.library(ARTIST) 타임아웃 (10초)")
+                            emptyList()
+                        }
                         LogBuffer.log("YouTube.library(FEmusic_library_corpus_artists) 완료, ${System.currentTimeMillis() - artistStart}ms, artists=${result.size}")
                         result
                     } catch (e: Exception) {
@@ -381,9 +392,14 @@ constructor(
 
                 MusicService.ALBUM -> {
                     val albumList: List<AlbumItem> = try {
-                        YouTube.library("FEmusic_liked_albums").completed().getOrNull()
-                            ?.items?.filterIsInstance<AlbumItem>()
-                            ?: emptyList()
+                        withTimeoutOrNull(10_000) {
+                            YouTube.library("FEmusic_liked_albums").completed().getOrNull()
+                                ?.items?.filterIsInstance<AlbumItem>()
+                                ?: emptyList()
+                        } ?: run {
+                            LogBuffer.log("YouTube.library(ALBUM) 타임아웃 (10초)")
+                            emptyList()
+                        }
                     } catch (e: Exception) {
                         reportException(e)
                         emptyList()
@@ -484,9 +500,14 @@ constructor(
                         for (page in 0 until maxPages) {
                             val homeStart = System.currentTimeMillis()
                             LogBuffer.log("YouTube.home() 호출 시작 (RECOMMENDED, page=$page)")
-                            val result = YouTube.home(continuation)
-                                .onFailure { LogBuffer.log("YouTube.home() 실패 (RECOMMENDED, page=$page): ${it.message}"); reportException(it) }
-                                .getOrNull()
+                            val result = withTimeoutOrNull(10_000) {
+                                YouTube.home(continuation)
+                                    .onFailure { LogBuffer.log("YouTube.home() 실패 (RECOMMENDED, page=$page): ${it.message}"); reportException(it) }
+                                    .getOrNull()
+                            } ?: run {
+                                LogBuffer.log("YouTube.home() 타임아웃 (RECOMMENDED, page=$page, 10초)")
+                                null
+                            }
                             LogBuffer.log("YouTube.home() 완료 (RECOMMENDED, page=$page), ${System.currentTimeMillis() - homeStart}ms, sections=${result?.sections?.size ?: -1}")
                             if (result == null) break
                             allSections.addAll(result.sections)
@@ -533,7 +554,12 @@ constructor(
                             val artistFetchStart = System.currentTimeMillis()
                             LogBuffer.log("YouTube.artist($artistId) 호출 시작")
                             val songs: List<SongItem> = try {
-                                val artistPage = YouTube.artist(artistId).getOrNull()
+                                val artistPage = withTimeoutOrNull(10_000) {
+                                    YouTube.artist(artistId).getOrNull()
+                                } ?: run {
+                                    LogBuffer.log("YouTube.artist() 타임아웃 (10초)")
+                                    null
+                                }
                                 LogBuffer.log("YouTube.artist() 완료, ${System.currentTimeMillis() - artistFetchStart}ms, 섹션 수=${artistPage?.sections?.size ?: -1}")
 
                                 // 1단계: 첫 페이지에서 모든 SongItem 모으기
@@ -615,10 +641,15 @@ constructor(
                         parentId.startsWith("${MusicService.ALBUM}/") -> {
                             val albumId = parentId.removePrefix("${MusicService.ALBUM}/")
                             val songs: List<SongItem> = try {
-                                YouTube.album(albumId).getOrNull()?.songs
-                                    ?.filterExplicit(context.dataStore.get(HideExplicitKey, false))
-                                    ?.filterVideoSongs(context.dataStore.get(HideVideoSongsKey, false))
-                                    ?: emptyList()
+                                withTimeoutOrNull(10_000) {
+                                    YouTube.album(albumId).getOrNull()?.songs
+                                        ?.filterExplicit(context.dataStore.get(HideExplicitKey, false))
+                                        ?.filterVideoSongs(context.dataStore.get(HideVideoSongsKey, false))
+                                        ?: emptyList()
+                                } ?: run {
+                                    LogBuffer.log("YouTube.album() 타임아웃 (10초)")
+                                    emptyList()
+                                }
                             } catch (e: Exception) {
                                 reportException(e)
                                 emptyList()
@@ -647,9 +678,14 @@ constructor(
                             if (playlistId == PlaylistEntity.LIKED_PLAYLIST_ID) {
                                 val songs: List<SongItem> = try {
                                     val lmStart = System.currentTimeMillis()
-                                    val lmSongs = YouTube.playlist("LM").completed().getOrNull()
-                                        ?.songs
-                                        ?: emptyList()
+                                    val lmSongs = withTimeoutOrNull(10_000) {
+                                        YouTube.playlist("LM").completed().getOrNull()
+                                            ?.songs
+                                            ?: emptyList()
+                                    } ?: run {
+                                        LogBuffer.log("YouTube.playlist('LM') 타임아웃 (10초)")
+                                        emptyList()
+                                    }
                                     LogBuffer.log("LIKED: playlist('LM').completed() → ${lmSongs.size}개, ${System.currentTimeMillis() - lmStart}ms")
 
                                     val afterExplicit = lmSongs.filterExplicit(context.dataStore.get(HideExplicitKey, false))
@@ -752,11 +788,16 @@ constructor(
                         parentId.startsWith("${MusicService.YOUTUBE_PLAYLIST}/") -> {
                             val playlistId = parentId.removePrefix("${MusicService.YOUTUBE_PLAYLIST}/")
                             val songs: List<SongItem> = try {
-                                YouTube.playlist(playlistId).getOrNull()?.songs
-                                    ?.take(100)
-                                    ?.filterExplicit(context.dataStore.get(HideExplicitKey, false))
-                                    ?.filterVideoSongs(context.dataStore.get(HideVideoSongsKey, false))
-                                    ?: emptyList()
+                                withTimeoutOrNull(10_000) {
+                                    YouTube.playlist(playlistId).getOrNull()?.songs
+                                        ?.take(100)
+                                        ?.filterExplicit(context.dataStore.get(HideExplicitKey, false))
+                                        ?.filterVideoSongs(context.dataStore.get(HideVideoSongsKey, false))
+                                        ?: emptyList()
+                                } ?: run {
+                                    LogBuffer.log("YouTube.playlist() 타임아웃 (10초)")
+                                    emptyList()
+                                }
                             } catch (e: Exception) {
                                 reportException(e)
                                 emptyList()
