@@ -27,6 +27,8 @@ import kotlinx.coroutines.runBlocking
 import java.io.File
 import java.io.FileNotFoundException
 import java.io.FileOutputStream
+import androidx.core.net.toUri
+import coil3.size.Size
 
 class AlbumArtContentProvider : ContentProvider() {
 
@@ -39,15 +41,29 @@ class AlbumArtContentProvider : ContentProvider() {
          * 차량 시스템에는 이 content:// URI 를 넘긴다.
          */
         fun mapUri(uri: Uri): Uri {
-            // 웹 URL 경로의 '/' 를 ':' 로 바꿔 단일 path 로 만든다 (Google 공식 방식)
-            val path = uri.encodedPath?.substring(1)?.replace('/', ':') ?: return Uri.EMPTY
-            android.util.Log.d("PTUBE_ART", "mapUri: input=$uri, path=$path")
+            // 1. URL 의 사이즈 부분을 고해상도로 교체 (=w120-h120 → =w544-h544)
+            // YouTube/Google CDN URL 패턴: ...=w{숫자}-h{숫자}[-기타옵션]
+            val originalUrl = uri.toString()
+            val hiResUrl = originalUrl
+                .replace(
+                    Regex("=w\\d+-h\\d+(-[^=&]*)?"),
+                    "=w1080-h1080-l90-rj"
+                )
+                .replace(
+                    Regex("=s\\d+(-[^=&]*)?"),
+                    "=s1080-l90-rj"
+                )
+            val hiResUri = if (hiResUrl != originalUrl) hiResUrl.toUri() else uri
+            android.util.Log.d("PTUBE_ART", "mapUri 변환: $originalUrl → $hiResUrl")
+
+            // 2. content:// URI 생성 (기존 로직 그대로)
+            val path = hiResUri.encodedPath?.substring(1)?.replace('/', ':') ?: return Uri.EMPTY
             val contentUri = Uri.Builder()
                 .scheme(ContentResolver.SCHEME_CONTENT)
                 .authority(AUTHORITY)
                 .path(path)
                 .build()
-            uriMap[contentUri] = uri
+            uriMap[contentUri] = hiResUri  // 고해상도 URL 로 매핑 저장
             return contentUri
         }
 
@@ -71,12 +87,13 @@ class AlbumArtContentProvider : ContentProvider() {
             // Coil 로 이미지 다운로드 (동기). 차량은 로딩 UI 를 보여주며 기다린다.
             val request = ImageRequest.Builder(context)
                 .data(remoteUri.toString())
+                .size(Size.ORIGINAL)
                 .build()
             val result = runBlocking { context.imageLoader.execute(request) }
             if (result is SuccessResult) {
                 val bitmap = result.image.toBitmap()
                 FileOutputStream(file).use { out ->
-                    bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 90, out)
+                    bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 95, out)
                 }
             } else {
                 throw FileNotFoundException("Failed to download art: $remoteUri")

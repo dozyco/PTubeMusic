@@ -380,13 +380,33 @@ constructor(
                     LogBuffer.log("ARTIST count=${artistList.size}, first=${artistList.firstOrNull()?.title}")
 
                     artistList.map { artist ->
-                        browsableMediaItemWithArtwork(
-                            "${MusicService.ARTIST}/${artist.id}",
-                            artist.title,
-                            null,
-                            artist.thumbnail,
-                            MediaMetadata.MEDIA_TYPE_ARTIST,
-                        )
+                        // 그리드 형식 hint 박아서 큰 카드로 표시 (공식 YouTube Music 처럼)
+                        val gridExtras = android.os.Bundle().apply {
+                            putInt("android.media.browse.CONTENT_STYLE_BROWSABLE_HINT", 2)
+                            putInt("android.media.browse.CONTENT_STYLE_SINGLE_ITEM_HINT", 2)
+                        }
+                        val artworkUri = artist.thumbnail?.let { url ->
+                            // 작은 사이즈 URL 을 큰 사이즈 (w1080-h1080) 로 교체
+                            val hiRes = url
+                                .replace(Regex("=w\\d+-h\\d+(-[^=&]*)?"), "=w1080-h1080-l90-rj")
+                                .replace(Regex("=s\\d+(-[^=&]*)?"), "=s1080-l90-rj")
+                            hiRes.toUri()
+                        }?.let { AlbumArtContentProvider.mapUri(it) }
+
+                        MediaItem.Builder()
+                            .setMediaId("${MusicService.ARTIST}/${artist.id}")
+                            .setMediaMetadata(
+                                MediaMetadata.Builder()
+                                    .setTitle(artist.title)
+                                    .setSubtitle("Artist")
+                                    .setArtist("Artist")
+                                    .setArtworkUri(artworkUri)
+                                    .setIsPlayable(false)
+                                    .setIsBrowsable(true)
+                                    .setMediaType(MediaMetadata.MEDIA_TYPE_ARTIST)
+                                    .setExtras(gridExtras)
+                                    .build()
+                            ).build()
                     }
                 }
 
