@@ -47,11 +47,11 @@ class AlbumArtContentProvider : ContentProvider() {
             val hiResUrl = originalUrl
                 .replace(
                     Regex("=w\\d+-h\\d+(-[^=&]*)?"),
-                    "=w1080-h1080-l90-rj"
+                    "=w1080-h1080-l90"
                 )
                 .replace(
                     Regex("=s\\d+(-[^=&]*)?"),
-                    "=s1080-l90-rj"
+                    "=s1080-l90"
                 )
             val hiResUri = if (hiResUrl != originalUrl) hiResUrl.toUri() else uri
             android.util.Log.d("PTUBE_ART", "mapUri 변환: $originalUrl → $hiResUrl")
@@ -64,6 +64,16 @@ class AlbumArtContentProvider : ContentProvider() {
                 .path(path)
                 .build()
             uriMap[contentUri] = hiResUri  // 고해상도 URL 로 매핑 저장
+            return contentUri
+        }
+
+        // ARTIST 카드 등 정사각형으로 꽉 채워야 하는 경우용.
+        // 표식(crop=1)을 매핑에 저장해서 openFile 에서 letterbox 대신 center-crop 한다.
+        private val cropSet = mutableSetOf<Uri>()
+
+        fun mapUriCrop(uri: Uri): Uri {
+            val contentUri = mapUri(uri)
+            cropSet.add(contentUri)
             return contentUri
         }
 
@@ -84,23 +94,77 @@ class AlbumArtContentProvider : ContentProvider() {
         val file = File(context.cacheDir, safeName)
 
         if (!file.exists()) {
-            // Coil 로 이미지 다운로드 (동기). 차량은 로딩 UI 를 보여주며 기다린다.
-            val request = ImageRequest.Builder(context)
-                .data(remoteUri.toString())
-                .size(Size.ORIGINAL)
-                .build()
-            val result = runBlocking { context.imageLoader.execute(request) }
-            if (result is SuccessResult) {
-                val bitmap = result.image.toBitmap()
-                FileOutputStream(file).use { out ->
-                    bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 95, out)
+            try {
+                // 1. 원본 다운로드 (바이트)
+                val url = java.net.URL(remoteUri.toString())
+                val connection = url.openConnection() as java.net.HttpURLConnection
+                connection.connectTimeout = 10_000
+                connection.readTimeout = 10_000
+                val bytes = connection.inputStream.use { it.readBytes() }
+                connection.disconnect()
+
+                // 2. 비트맵으로 디코딩
+                val decoded = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                    ?: throw FileNotFoundException("Decode failed: $remoteUri")
+
+                // 3. crop 대상이면 center-crop (정사각형 꽉 채움), 아니면 letterbox (검은 배경)
+                val finalBitmap = if (cropSet.contains(uri)) {
+                    centerCrop(decoded)
+                } else {
+                    letterbox(decoded)
                 }
-            } else {
-                throw FileNotFoundException("Failed to download art: $remoteUri")
+
+                // 4. PNG 무손실 저장
+                FileOutputStream(file).use { out ->
+                    finalBitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, out)
+                }
+                android.util.Log.d("PTUBE_ART", "Saved: ${finalBitmap.width}x${finalBitmap.height} (orig ${decoded.width}x${decoded.height}) for $remoteUri")
+            } catch (e: Exception) {
+                android.util.Log.e("PTUBE_ART", "Failed: $remoteUri", e)
+                if (file.exists()) file.delete()
+                throw FileNotFoundException("Failed to download art: $remoteUri - ${e.message}")
             }
         }
 
         return ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
+    }
+
+    /**
+     * 작은 변 기준 정사각형으로 가운데를 잘라낸다 (center-crop).
+     * 직사각형 이미지를 정사각형 슬롯에 꽉 채울 때 사용 (ARTIST 카드 등).
+     */
+    private fun centerCrop(src: android.graphics.Bitmap): android.graphics.Bitmap {
+        val w = src.width
+        val h = src.height
+        if (w == h) return src
+        return try {
+            val s = minOf(w, h)  // 작은 변 기준
+            val x = (w - s) / 2
+            val y = (h - s) / 2
+            android.graphics.Bitmap.createBitmap(src, x, y, s, s)
+        } catch (e: Throwable) {
+            src
+        }
+    }
+
+    /**
+     * 가로·세로가 다르면 큰 변 기준 정사각형 캔버스를 만들고 검은색으로 채운 뒤
+     * 원본을 가운데 배치(letterbox). 이미 정사각형이면 원본 그대로 반환.
+     */
+    private fun letterbox(src: android.graphics.Bitmap): android.graphics.Bitmap {
+        val w = src.width
+        val h = src.height
+        if (w == h) return src  // 이미 1:1 → 그대로
+        return try {
+            val s = maxOf(w, h)  // 큰 변 기준 정사각형
+            val out = android.graphics.Bitmap.createBitmap(s, s, android.graphics.Bitmap.Config.ARGB_8888)
+            val c = android.graphics.Canvas(out)
+            c.drawColor(0xFF000000.toInt())  // 검은색 100% (반투명 금지)
+            c.drawBitmap(src, (s - w) / 2f, (s - h) / 2f, null)  // 가운데
+            out
+        } catch (e: Throwable) {
+            src  // 실패 시 원본 폴백
+        }
     }
 
     override fun insert(uri: Uri, values: ContentValues?): Uri? = null

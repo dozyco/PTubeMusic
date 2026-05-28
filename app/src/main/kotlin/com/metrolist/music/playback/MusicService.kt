@@ -554,9 +554,6 @@ class MusicService :
                     action: String,
                     extras: Bundle,
                 ): Boolean = defaultMediaNotificationProvider.handleCustomCommand(session, action, extras)
-
-                override fun getNotificationChannelInfo(): MediaNotification.Provider.NotificationChannelInfo =
-                    defaultMediaNotificationProvider.notificationChannelInfo
             },
         )
         player = createExoPlayer()

@@ -193,8 +193,19 @@ constructor(
         session: MediaLibrarySession,
         browser: MediaSession.ControllerInfo,
         params: MediaLibraryService.LibraryParams?,
-    ): ListenableFuture<LibraryResult<MediaItem>> =
-        Futures.immediateFuture(
+    ): ListenableFuture<LibraryResult<MediaItem>> {
+        // 차량이 보내는 root hint 전체 로깅 (EXTRA_MEDIA_ART_SIZE_HINT_PIXELS 확인용)
+        LogBuffer.log("onGetLibraryRoot 호출됨, controller=${browser.packageName}")
+        val extras = params?.extras
+        if (extras != null) {
+            LogBuffer.log("rootHints 키 개수: ${extras.keySet().size}")
+            extras.keySet().forEach { key ->
+                LogBuffer.log("rootHint: $key = ${extras.get(key)}")
+            }
+        } else {
+            LogBuffer.log("rootHints 없음 (params or extras null)")
+        }
+        return Futures.immediateFuture(
             LibraryResult.ofItem(
                 MediaItem
                     .Builder()
@@ -210,6 +221,7 @@ constructor(
                 params,
             ),
         )
+    }
 
     override fun onGetChildren(
         session: MediaLibrarySession,
@@ -381,17 +393,25 @@ constructor(
 
                     artistList.map { artist ->
                         // 그리드 형식 hint 박아서 큰 카드로 표시 (공식 YouTube Music 처럼)
-                        val gridExtras = android.os.Bundle().apply {
-                            putInt("android.media.browse.CONTENT_STYLE_BROWSABLE_HINT", 2)
-                            putInt("android.media.browse.CONTENT_STYLE_SINGLE_ITEM_HINT", 2)
-                        }
+                        // 추가로 ALBUM_ART_URI/ART_URI/DISPLAY_ICON_URI 3개 키에 직접 박아 차량이 고화질 처리하게 함
                         val artworkUri = artist.thumbnail?.let { url ->
-                            // 작은 사이즈 URL 을 큰 사이즈 (w1080-h1080) 로 교체
                             val hiRes = url
                                 .replace(Regex("=w\\d+-h\\d+(-[^=&]*)?"), "=w1080-h1080-l90-rj")
                                 .replace(Regex("=s\\d+(-[^=&]*)?"), "=s1080-l90-rj")
                             hiRes.toUri()
-                        }?.let { AlbumArtContentProvider.mapUri(it) }
+                        }?.let { AlbumArtContentProvider.mapUriCrop(it) }
+
+                        val extras = android.os.Bundle().apply {
+                            putInt("android.media.browse.CONTENT_STYLE_BROWSABLE_HINT", 2)
+                            putInt("android.media.browse.CONTENT_STYLE_SINGLE_ITEM_HINT", 2)
+                            // 3가지 메타데이터 키에 똑같이 박기 (코덱스 해결책 핵심)
+                            if (artworkUri != null) {
+                                val uriString = artworkUri.toString()
+                                putString("android.media.metadata.DISPLAY_ICON_URI", uriString)
+                                putString("android.media.metadata.ALBUM_ART_URI", uriString)
+                                putString("android.media.metadata.ART_URI", uriString)
+                            }
+                        }
 
                         MediaItem.Builder()
                             .setMediaId("${MusicService.ARTIST}/${artist.id}")
@@ -404,7 +424,7 @@ constructor(
                                     .setIsPlayable(false)
                                     .setIsBrowsable(true)
                                     .setMediaType(MediaMetadata.MEDIA_TYPE_ARTIST)
-                                    .setExtras(gridExtras)
+                                    .setExtras(extras)
                                     .build()
                             ).build()
                     }
