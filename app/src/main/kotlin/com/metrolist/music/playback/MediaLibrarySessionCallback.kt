@@ -265,6 +265,7 @@ constructor(
                         AndroidAutoSection.LIKED to true,
                         AndroidAutoSection.ARTISTS to true,
                         AndroidAutoSection.RECOMMENDED to true,
+                        AndroidAutoSection.PLAYLISTS to true,
                     )
                     val showYoutubePlaylists = context.dataStore.get(AndroidAutoYouTubePlaylistsKey, false)
                     val rootItems = sections
@@ -457,33 +458,39 @@ constructor(
                 }
 
                 MusicService.PLAYLIST -> {
-                    val likedSongCount = database.likedSongsCount().first()
-                    val downloadedSongCount = downloadUtil.downloads.value.size
-
-                    listOf(
-                        browsableMediaItem(
-                            "${MusicService.PLAYLIST}/${PlaylistEntity.LIKED_PLAYLIST_ID}",
-                            context.getString(R.string.liked_songs),
-                            context.resources.getQuantityString(R.plurals.n_song, likedSongCount, likedSongCount),
-                            drawableUri(R.drawable.favorite),
-                            MediaMetadata.MEDIA_TYPE_PLAYLIST,
-                        ),
-                        browsableMediaItem(
-                            "${MusicService.PLAYLIST}/${PlaylistEntity.DOWNLOADED_PLAYLIST_ID}",
-                            context.getString(R.string.downloaded_songs),
-                            context.resources.getQuantityString(R.plurals.n_song, downloadedSongCount, downloadedSongCount),
-                            drawableUri(R.drawable.download),
-                            MediaMetadata.MEDIA_TYPE_PLAYLIST,
-                        ),
-                    ) + database.playlistsByCreateDateAsc().first().map { playlist ->
-                        browsableMediaItem(
-                            "${MusicService.PLAYLIST}/${playlist.id}",
-                            playlist.playlist.name,
-                            context.resources.getQuantityString(R.plurals.n_song, playlist.songCount, playlist.songCount),
-                            playlist.thumbnails.firstOrNull()?.toUri(),
-                            MediaMetadata.MEDIA_TYPE_PLAYLIST,
-                        )
+                    // YouTube 라이브러리에 저장/생성한 실제 플레이리스트만 표시
+                    val ytPlaylistStart = System.currentTimeMillis()
+                    LogBuffer.log("YouTube.library(FEmusic_liked_playlists) 호출 시작")
+                    val ytPlaylists: List<PlaylistItem> = try {
+                        val result = withTimeoutOrNull(10_000) {
+                            YouTube.library("FEmusic_liked_playlists").completed().getOrNull()
+                                ?.items?.filterIsInstance<PlaylistItem>()
+                                ?: emptyList()
+                        } ?: run {
+                            LogBuffer.log("YouTube.library(PLAYLIST) 타임아웃 (10초)")
+                            emptyList()
+                        }
+                        LogBuffer.log("YouTube.library(FEmusic_liked_playlists) 완료, ${System.currentTimeMillis() - ytPlaylistStart}ms, playlists=${result.size}")
+                        result
+                    } catch (e: Exception) {
+                        LogBuffer.log("YouTube.library(FEmusic_liked_playlists) 실패: ${e.message}")
+                        reportException(e)
+                        emptyList()
                     }
+
+                    ytPlaylists
+                        // 자동 플레이리스트(좋아요 음악 LM, 나중에 들을 에피소드 SE) 제외
+                        .filterNot { it.id == "LM" || it.id == "SE" || it.id == "VLLM" || it.id == "VLSE" }
+                        .map { playlist ->
+                            // YouTube 플레이리스트는 YOUTUBE_PLAYLIST 경로로 (클릭 시 YouTube.playlist() 로 곡 로드)
+                            browsableMediaItemWithArtwork(
+                                "${MusicService.YOUTUBE_PLAYLIST}/${playlist.id}",
+                                playlist.title,
+                                playlist.author?.name,
+                                playlist.thumbnail,
+                                MediaMetadata.MEDIA_TYPE_PLAYLIST,
+                            )
+                        }
                 }
 
                 MusicService.YOUTUBE_PLAYLIST -> {

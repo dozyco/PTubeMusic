@@ -73,6 +73,8 @@ import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import androidx.compose.material3.Slider
+import androidx.compose.material.icons.filled.Refresh
 
 /**
  * 차량용 설정 액티비티
@@ -89,7 +91,9 @@ class AutomotiveSettingsActivity : ComponentActivity() {
                     onCloseClick = { finish() },
                     onSaveCookie = { cookie -> saveCookie(cookie) },
                     onLogoutClick = { performLogout() },
-                    onSelectAudioQuality = { quality -> saveAudioQuality(quality) }
+                    onSelectAudioQuality = { quality -> saveAudioQuality(quality) },
+                    onSelectBaseBoost = { db -> saveBaseBoost(db) },
+                    onRestartClick = { restartApp() }
                 )
             }
         }
@@ -206,6 +210,33 @@ class AutomotiveSettingsActivity : ComponentActivity() {
             recreate()
         }
     }
+
+    /**
+     * 음량 부스트(dB)를 저장한다. MusicService 가 DataStore 를 구독해 즉시 반영한다.
+     * recreate() 안 함 — 슬라이더 조작 중 화면 재생성되면 끊기므로.
+     */
+    private fun saveBaseBoost(db: Int) {
+        lifecycleScope.launch {
+            dataStore.edit { prefs ->
+                prefs[com.metrolist.music.constants.BaseBoostDbKey] = db.coerceIn(0, 30)
+            }
+        }
+    }
+
+    /**
+     * 앱 프로세스를 재시작한다. 차량 환경에서는 MainActivity(모바일 UI)를 띄우면 안 되고,
+     * 설정 화면을 닫고 프로세스만 종료하면 차량 시스템이 미디어 앱을 다시 연결한다.
+     */
+    private fun restartApp() {
+        // 음악 서비스 중지 (꼬인 상태 초기화)
+        runCatching {
+            stopService(android.content.Intent(this, com.metrolist.music.playback.MusicService::class.java))
+        }
+        Toast.makeText(this, "재시작 중...", Toast.LENGTH_SHORT).show()
+        finish()
+        // 프로세스 종료 → 차량이 미디어 앱을 새로 연결
+        Runtime.getRuntime().exit(0)
+    }
 }
 
 /**
@@ -224,6 +255,8 @@ private fun SettingsScreen(
     onSaveCookie: (String) -> Unit,
     onLogoutClick: () -> Unit,
     onSelectAudioQuality: (AudioQuality) -> Unit,
+    onSelectBaseBoost: (Int) -> Unit,
+    onRestartClick: () -> Unit,
 ) {
     val context = LocalContext.current
 
@@ -310,6 +343,29 @@ private fun SettingsScreen(
                     color = MaterialTheme.colorScheme.onBackground,
                     modifier = Modifier.weight(1f)
                 )
+                // 재시작 버튼
+                Button(
+                    onClick = onRestartClick,
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.primary,
+                        contentColor = MaterialTheme.colorScheme.onPrimary
+                    ),
+                    modifier = Modifier.height(48.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Refresh,
+                        contentDescription = null,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "재시작",
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+                Spacer(modifier = Modifier.width(12.dp))
                 IconButton(onClick = onCloseClick) {
                     Icon(
                         imageVector = Icons.Default.Close,
@@ -508,6 +564,8 @@ private fun SettingsScreen(
             Spacer(modifier = Modifier.height(16.dp))
 
             // 음질 설정 카드
+            var audioQualityExpanded by remember { mutableStateOf(false) }
+
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(
@@ -535,41 +593,113 @@ private fun SettingsScreen(
 
                     Spacer(modifier = Modifier.height(16.dp))
 
-                    val qualities = listOf(
-                        AudioQuality.AUTO,
-                        AudioQuality.LOW,
-                        AudioQuality.HIGH,
-                        AudioQuality.VERY_HIGH,
-                    )
+                    // 현재 선택값 버튼. 누르면 아래로 선택지가 펼쳐짐.
+                    Button(
+                        onClick = { audioQualityExpanded = !audioQualityExpanded },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(52.dp),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.primary,
+                            contentColor = MaterialTheme.colorScheme.onPrimary
+                        )
+                    ) {
+                        Text(
+                            text = audioQualityLabel(currentAudioQuality) + if (audioQualityExpanded) "  ▲" else "  ▼",
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
 
-                    qualities.forEach { quality ->
-                        val selected = quality == currentAudioQuality
-                        Button(
-                            onClick = { onSelectAudioQuality(quality) },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(52.dp)
-                                .padding(vertical = 4.dp),
-                            shape = RoundedCornerShape(12.dp),
-                            colors = if (selected) {
-                                ButtonDefaults.buttonColors(
-                                    containerColor = MaterialTheme.colorScheme.primary,
-                                    contentColor = MaterialTheme.colorScheme.onPrimary
-                                )
-                            } else {
-                                ButtonDefaults.buttonColors(
-                                    containerColor = MaterialTheme.colorScheme.surface,
-                                    contentColor = MaterialTheme.colorScheme.onSurface
+                    // 펼쳐졌을 때만 나머지 선택지 표시
+                    if (audioQualityExpanded) {
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        val qualities = listOf(
+                            AudioQuality.AUTO,
+                            AudioQuality.LOW,
+                            AudioQuality.HIGH,
+                            AudioQuality.VERY_HIGH,
+                        )
+
+                        qualities.forEach { quality ->
+                            val selected = quality == currentAudioQuality
+                            Button(
+                                onClick = {
+                                    onSelectAudioQuality(quality)
+                                    audioQualityExpanded = false
+                                },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(52.dp)
+                                    .padding(vertical = 4.dp),
+                                shape = RoundedCornerShape(12.dp),
+                                colors = if (selected) {
+                                    ButtonDefaults.buttonColors(
+                                        containerColor = MaterialTheme.colorScheme.primary,
+                                        contentColor = MaterialTheme.colorScheme.onPrimary
+                                    )
+                                } else {
+                                    ButtonDefaults.buttonColors(
+                                        containerColor = MaterialTheme.colorScheme.surface,
+                                        contentColor = MaterialTheme.colorScheme.onSurface
+                                    )
+                                }
+                            ) {
+                                Text(
+                                    text = audioQualityLabel(quality) + if (selected) "  ✓" else "",
+                                    fontSize = 16.sp,
+                                    fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal
                                 )
                             }
-                        ) {
-                            Text(
-                                text = audioQualityLabel(quality) + if (selected) "  ✓" else "",
-                                fontSize = 16.sp,
-                                fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal
-                            )
                         }
                     }
+                }
+            }
+            // 음량 부스트 설정 카드
+            Spacer(modifier = Modifier.height(16.dp))
+
+            val initialBoost = remember {
+                context.dataStore.get(com.metrolist.music.constants.BaseBoostDbKey,
+                    com.metrolist.music.constants.DEFAULT_BASE_BOOST_DB)
+            }
+            var boostValue by remember { mutableStateOf(initialBoost.toFloat()) }
+
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant
+                ),
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(24.dp)
+                ) {
+                    Text(
+                        text = "음량 부스트",
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+
+                    Spacer(modifier = Modifier.height(4.dp))
+
+                    Text(
+                        text = "현재: +${boostValue.toInt()} dB (0 = 부스트 없음)",
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    Slider(
+                        value = boostValue,
+                        onValueChange = { boostValue = it },
+                        onValueChangeFinished = { onSelectBaseBoost(boostValue.toInt()) },
+                        valueRange = 0f..30f,
+                        steps = 29, // 0~30 정수 단위
+                    )
                 }
             }
 

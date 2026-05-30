@@ -390,6 +390,10 @@ class MusicService :
     @Volatile
     private var normalizationEnabledCached: Boolean = false
 
+    // 사용자가 설정한 기본 부스트 (millibel). 기본 10dB = 1000mB.
+    @Volatile
+    private var baseBoostMbCached: Int = com.metrolist.music.constants.DEFAULT_BASE_BOOST_DB * 100
+
     @Volatile
     private var loudnessLevelCached: LoudnessLevel = LoudnessLevel.BALANCED
 
@@ -818,6 +822,17 @@ class MusicService :
             loudnessLevelCached = loudnessLevel
             setupLoudnessEnhancer()
         }
+
+        // 사용자 기본 부스트 설정 변경 감지 → 캐시 갱신 + 즉시 반영
+        dataStore.data
+            .map { (it[com.metrolist.music.constants.BaseBoostDbKey] ?: com.metrolist.music.constants.DEFAULT_BASE_BOOST_DB) }
+            .distinctUntilChanged()
+            .collectLatest(scope) { boostDb ->
+                baseBoostMbCached = boostDb.coerceIn(0, 30) * 100
+                Timber.tag(TAG).d("Base boost changed: ${boostDb}dB (${baseBoostMbCached}mB)")
+                applyCachedLoudnessEnhancerNow()
+                setupLoudnessEnhancer()
+            }
 
         combine(
             dataStore.data.map { it[AudioOffload] ?: false },
@@ -1941,7 +1956,7 @@ class MusicService :
     private fun applyCachedLoudnessEnhancerNow() {
         val enhancer = loudnessEnhancer ?: return
         try {
-            val baseBoost = BASE_BOOST_MB
+            val baseBoost = baseBoostMbCached
             val gain = cachedNormalizationGainMb
             if (cachedNormalizationEnabled && gain != null) {
                 // normalization 켜져 있으면: normalization 게인 + 기본 부스트 합산
@@ -2035,7 +2050,7 @@ class MusicService :
                                 cachedNormalizationGainMb = clampedGain
                                 cachedNormalizationEnabled = true
                                 // baseBoost 를 더해서 적용해야 곡 중간/끝에서 부스트가 사라지지 않음
-                                loudnessEnhancer?.setTargetGain(clampedGain + BASE_BOOST_MB)
+                                loudnessEnhancer?.setTargetGain(clampedGain + baseBoostMbCached)
                                 loudnessEnhancer?.enabled = true
                             }
 
@@ -2048,7 +2063,7 @@ class MusicService :
                                 cachedNormalizationGainMb = null
                                 cachedNormalizationEnabled = false
                                 // normalization 데이터 없어도 기본 부스트는 유지
-                                loudnessEnhancer?.setTargetGain(BASE_BOOST_MB)
+                                loudnessEnhancer?.setTargetGain(baseBoostMbCached)
                                 loudnessEnhancer?.enabled = true
                                 Timber.tag(TAG).w("No loudness data - applying base boost only")
                             }
@@ -2060,7 +2075,7 @@ class MusicService :
                         cachedNormalizationGainMb = null
                         cachedNormalizationEnabled = false
                         // normalization 꺼져 있어도 기본 부스트는 적용
-                        loudnessEnhancer?.setTargetGain(BASE_BOOST_MB)
+                        loudnessEnhancer?.setTargetGain(baseBoostMbCached)
                         loudnessEnhancer?.enabled = true
                         Timber.tag(TAG).d("setupLoudnessEnhancer: normalization off, base boost only")
                     }
@@ -4182,7 +4197,7 @@ class MusicService :
         // Constants for audio normalization
         private const val MAX_GAIN_MB = 300 // Maximum gain in millibels (3 dB)
         private const val MIN_GAIN_MB = -1500 // Minimum gain in millibels (-15 dB)
-        const val BASE_BOOST_MB = 1000 // PTubeMusic 기본 음량 부스트 (+10 dB), 모든 곡에 항상 적용
+
 
         private const val TAG = "MusicService"
 

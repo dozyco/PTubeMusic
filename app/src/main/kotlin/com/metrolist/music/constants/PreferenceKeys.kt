@@ -129,6 +129,10 @@ val AudioNormalizationKey = booleanPreferencesKey("audioNormalization")
 
 val LoudnessLevelKey = stringPreferencesKey("loudnessLevel")
 
+// PTubeMusic 기본 음량 부스트 (단위: dB, 0~30). 기본값 0 = 부스트 없음.
+val BaseBoostDbKey = intPreferencesKey("baseBoostDb")
+const val DEFAULT_BASE_BOOST_DB = 0
+
 enum class LoudnessLevel(
     val targetLufs: Float
 ) {
