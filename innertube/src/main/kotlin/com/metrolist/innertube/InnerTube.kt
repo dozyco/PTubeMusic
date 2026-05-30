@@ -57,8 +57,23 @@ class InnerTube {
             httpClient.close()
             httpClient = createClient()
         }
-    
+
     var proxyAuth: String? = null
+
+    /**
+     * 기존 httpClient 를 닫고 새로 만든다.
+     * 슬립/네트워크 변화 후 connection pool 에 남은 죽은 연결 때문에
+     * 요청이 hang 되는 문제를 해결하기 위함 (OkHttp keep-alive 5분 대기 회피).
+     */
+    fun reloadClient() {
+        try {
+            httpClient.close()
+        } catch (e: Exception) {
+            Timber.e(e, "reloadClient: failed to close old client")
+        }
+        httpClient = createClient()
+        Timber.d("reloadClient: httpClient recreated")
+    }
 
     var useLoginForBrowse: Boolean = false
 
@@ -85,16 +100,16 @@ class InnerTube {
                 // Connection pool settings for better connection reuse
                 connectionPool(
                     okhttp3.ConnectionPool(
-                        10, // maxIdleConnections
-                        5, // keepAliveDuration
-                        java.util.concurrent.TimeUnit.MINUTES
+                        5, // maxIdleConnections
+                        30, // keepAliveDuration (5분 → 30초, 죽은 연결 빨리 제거)
+                        java.util.concurrent.TimeUnit.SECONDS
                     )
                 )
-                
-                // Timeout configurations
-                connectTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
-                readTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
-                writeTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
+
+                // Timeout configurations (슬립 후 빠른 복구를 위해 짧게)
+                connectTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
+                readTimeout(8, java.util.concurrent.TimeUnit.SECONDS)
+                writeTimeout(8, java.util.concurrent.TimeUnit.SECONDS)
                 
                 // Enable HTTP/2 for better performance
                 protocols(listOf(okhttp3.Protocol.HTTP_2, okhttp3.Protocol.HTTP_1_1))
@@ -127,10 +142,11 @@ class InnerTube {
         }
 
         // Request timeout configuration
+        // 슬립 후 죽은 연결을 빨리 감지하고 재시도하도록 짧게 설정
         install(HttpTimeout) {
-            requestTimeoutMillis = 60000
-            connectTimeoutMillis = 30000
-            socketTimeoutMillis = 60000
+            requestTimeoutMillis = 8000
+            connectTimeoutMillis = 5000
+            socketTimeoutMillis = 8000
         }
 
         defaultRequest {
@@ -181,9 +197,23 @@ class InnerTube {
         while (true) {
             try {
                 return block()
-            } catch (e: IOException) {
+            } catch (e: Exception) {
+                // IOException(소켓 끊김/타임아웃) 또는 그 하위 원인일 때만 재시도
+                val isRetriable = e is IOException ||
+                        e.cause is IOException ||
+                        e is io.ktor.client.plugins.HttpRequestTimeoutException ||
+                        e is io.ktor.client.network.sockets.SocketTimeoutException ||
+                        e is io.ktor.client.network.sockets.ConnectTimeoutException
+                if (!isRetriable) throw e
+
                 attempt++
                 if (attempt >= maxAttempts) throw e
+
+                // 죽은 connection pool 때문에 hang 된 것일 수 있으므로
+                // 재시도 전에 httpClient 를 통째로 새로 만든다 (슬립 후 즉시 복구의 핵심)
+                Timber.w(e, "withRetry: 요청 실패, 클라이언트 재생성 후 재시도 ($attempt/$maxAttempts)")
+                reloadClient()
+
                 delay(currentDelay)
                 currentDelay = (currentDelay * factor).toLong()
             }

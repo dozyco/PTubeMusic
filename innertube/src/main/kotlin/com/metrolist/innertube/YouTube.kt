@@ -126,6 +126,14 @@ object YouTube {
             innerTube.useLoginForBrowse = value
         }
 
+    /**
+     * 슬립/네트워크 변화 후 죽은 connection pool 때문에 요청이 hang 되는 문제 해결.
+     * httpClient 를 통째로 재생성한다.
+     */
+    fun reloadClient() {
+        innerTube.reloadClient()
+    }
+
     suspend fun searchSuggestions(query: String): Result<SearchSuggestions> =
         runCatching {
             val response = innerTube.getSearchSuggestions(WEB_REMIX, query).body<GetSearchSuggestionsResponse>()

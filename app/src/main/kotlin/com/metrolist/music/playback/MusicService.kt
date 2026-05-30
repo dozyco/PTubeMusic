@@ -647,7 +647,14 @@ class MusicService :
 
         scope.launch {
             connectivityObserver.networkStatus.collect { isConnected ->
+                val wasDisconnected = !isNetworkConnected.value
                 isNetworkConnected.value = isConnected
+                // 네트워크가 끊겼다 다시 연결되면 죽은 connection pool 을 버리고 새 클라이언트 생성
+                // (슬립 후 5분간 hang 되는 문제 해결)
+                if (isConnected && wasDisconnected) {
+                    YouTube.reloadClient()
+                    Timber.tag(TAG).d("Network reconnected, reloaded YouTube httpClient")
+                }
                 if (isConnected && waitingForNetworkConnection.value) {
                     triggerRetry()
                 }
@@ -1934,7 +1941,7 @@ class MusicService :
     private fun applyCachedLoudnessEnhancerNow() {
         val enhancer = loudnessEnhancer ?: return
         try {
-            val baseBoost = 1500 // 기본 부스트 +15 dB (PTubeMusic 전체 음량 부스트)
+            val baseBoost = BASE_BOOST_MB
             val gain = cachedNormalizationGainMb
             if (cachedNormalizationEnabled && gain != null) {
                 // normalization 켜져 있으면: normalization 게인 + 기본 부스트 합산
@@ -2027,7 +2034,8 @@ class MusicService :
 
                                 cachedNormalizationGainMb = clampedGain
                                 cachedNormalizationEnabled = true
-                                loudnessEnhancer?.setTargetGain(clampedGain)
+                                // baseBoost 를 더해서 적용해야 곡 중간/끝에서 부스트가 사라지지 않음
+                                loudnessEnhancer?.setTargetGain(clampedGain + BASE_BOOST_MB)
                                 loudnessEnhancer?.enabled = true
                             }
 
@@ -2039,8 +2047,10 @@ class MusicService :
                             else -> {
                                 cachedNormalizationGainMb = null
                                 cachedNormalizationEnabled = false
-                                loudnessEnhancer?.enabled = false
-                                Timber.tag(TAG).w("No loudness data available for track - normalization disabled")
+                                // normalization 데이터 없어도 기본 부스트는 유지
+                                loudnessEnhancer?.setTargetGain(BASE_BOOST_MB)
+                                loudnessEnhancer?.enabled = true
+                                Timber.tag(TAG).w("No loudness data - applying base boost only")
                             }
                         }
                     }
@@ -2049,8 +2059,10 @@ class MusicService :
                         if (!isActive || requestGeneration != loudnessSetupGeneration) return@withContext
                         cachedNormalizationGainMb = null
                         cachedNormalizationEnabled = false
-                        loudnessEnhancer?.enabled = false
-                        Timber.tag(TAG).d("setupLoudnessEnhancer: normalization disabled or mediaId unavailable")
+                        // normalization 꺼져 있어도 기본 부스트는 적용
+                        loudnessEnhancer?.setTargetGain(BASE_BOOST_MB)
+                        loudnessEnhancer?.enabled = true
+                        Timber.tag(TAG).d("setupLoudnessEnhancer: normalization off, base boost only")
                     }
                 }
             } catch (e: CancellationException) {
@@ -4170,6 +4182,7 @@ class MusicService :
         // Constants for audio normalization
         private const val MAX_GAIN_MB = 300 // Maximum gain in millibels (3 dB)
         private const val MIN_GAIN_MB = -1500 // Minimum gain in millibels (-15 dB)
+        const val BASE_BOOST_MB = 1000 // PTubeMusic 기본 음량 부스트 (+10 dB), 모든 곡에 항상 적용
 
         private const val TAG = "MusicService"
 
