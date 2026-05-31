@@ -772,15 +772,17 @@ constructor(
                                 // 차에서 방금 해제한 곡은 서버 LM 반영이 늦어 아직 목록에 남아있을 수 있다.
                                 // DB에 liked=false 로 명시적으로 저장된 곡은 화면에서 제외한다.
                                 // (DB에 없거나 liked=true 인 곡은 그대로 표시 → 폰에서 좋아요한 새 곡 정상 표시)
-                                val filteredSongs = songs.filter { songItem ->
-                                    val dbSong = try {
-                                        database.song(songItem.id).first()
-                                    } catch (e: Exception) {
-                                        null
+                                val filteredSongs = songs
+                                    .distinctBy { it.id }   // 서버 LM 이 같은 곡을 중복으로 줄 때 화면 중복 방지
+                                    .filter { songItem ->
+                                        val dbSong = try {
+                                            database.song(songItem.id).first()
+                                        } catch (e: Exception) {
+                                            null
+                                        }
+                                        dbSong?.song?.liked != false
                                     }
-                                    dbSong?.song?.liked != false
-                                }
-                                LogBuffer.log("LIKED: DB 해제곡 제외 후 ${filteredSongs.size}개 (원본 ${songs.size}개)")
+                                LogBuffer.log("LIKED: DB 해제곡 제외 후 ${filteredSongs.size}개 (원본 ${songs.size}개, 중복제거 적용)")
 
                                 val shuffleItem: MediaItem = MediaItem.Builder()
                                     .setMediaId("$parentId/${MusicService.SHUFFLE_ACTION}")

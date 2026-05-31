@@ -281,6 +281,49 @@ private fun SettingsScreen(
 
     var cookieInput by remember { mutableStateOf("") }
 
+    // 재시작 확인 다이얼로그 표시 여부
+    var showRestartDialog by remember { mutableStateOf(false) }
+
+    // 재시작 확인 다이얼로그
+    if (showRestartDialog) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { showRestartDialog = false },
+            title = {
+                Text(
+                    text = "앱 재시작",
+                    fontSize = 22.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            },
+            text = {
+                Text(
+                    text = "앱을 재시작하시겠습니까?\n재생이 중단되고 앱이 다시 시작됩니다.",
+                    fontSize = 16.sp
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showRestartDialog = false
+                        onRestartClick()
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.primary
+                    )
+                ) {
+                    Text(text = "재시작", fontSize = 16.sp)
+                }
+            },
+            dismissButton = {
+                OutlinedButton(
+                    onClick = { showRestartDialog = false }
+                ) {
+                    Text(text = "취소", fontSize = 16.sp)
+                }
+            }
+        )
+    }
+
     // 쿠키 상태: 처음엔 쿠키 유무에 따라 CHECKING 또는 NONE
     var cookieStatus by remember {
         mutableStateOf(if (hasCookie) CookieStatus.CHECKING else CookieStatus.NONE)
@@ -345,7 +388,7 @@ private fun SettingsScreen(
                 )
                 // 재시작 버튼
                 Button(
-                    onClick = onRestartClick,
+                    onClick = { showRestartDialog = true },
                     shape = RoundedCornerShape(12.dp),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = MaterialTheme.colorScheme.primary,
