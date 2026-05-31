@@ -68,7 +68,7 @@ PTubeMusic 은 Polestar 4 (Android Automotive OS) 차량에서 사용 가능한 
 
 ### 8. PTubeMusic 에 쿠키 입력
 
-* 폴4 차량 또는 에뮬레이터에서 PTubeMusic 실행
+* 폴스타4 차량에서 PTubeMusic 실행
 * 설정 → 계정 → 쿠키 입력 메뉴 진입
 * 복사한 쿠키 전체를 붙여넣기
 * 저장
