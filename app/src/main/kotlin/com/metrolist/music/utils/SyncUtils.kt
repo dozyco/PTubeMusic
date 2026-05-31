@@ -573,9 +573,13 @@ class SyncUtils @Inject constructor(
             return@withContext
         }
 
+        com.metrolist.music.automotive.LogBuffer.log("executeLikeSong: YouTube.likeVideo 호출 id=${s.id}, liked=${s.liked}")
         withRetry {
             YouTube.likeVideo(s.id, s.liked)
+        }.onSuccess {
+            com.metrolist.music.automotive.LogBuffer.log("executeLikeSong: likeVideo 성공 id=${s.id}, liked=${s.liked}")
         }.onFailure { e ->
+            com.metrolist.music.automotive.LogBuffer.log("executeLikeSong: likeVideo 실패 id=${s.id}: ${e.message}")
             Timber.e(e, "Failed to like song on YouTube: ${s.id}")
         }
 

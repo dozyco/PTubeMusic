@@ -746,37 +746,41 @@ constructor(
                                     emptyList()
                                 }
 
-                                // 양방향 풀 동기화: YouTube 서버의 좋아요 목록을 로컬 DB의 진실로 만듦.
-                                // 1) 서버 목록에 있는 곡 → DB에 insert + liked=true
-                                // 2) 서버 목록에 없는데 DB에 liked=true 인 곡 → liked=false (지금은 비활성화)
-                                val syncStart = System.currentTimeMillis()
+                                // 서버 LM 목록을 DB에 무조건 liked=true 로 반영하던 "동기화 1단계"는 제거함.
+                                // 이유: MV 등 일부 곡은 removelike 해도 서버 LM 에 남아있는데,
+                                // 1단계가 그걸 보고 DB 를 도로 liked=true 로 되살려서
+                                // "해제했는데 다시 재생하면 하트가 켜져있고 목록에서도 안 빠지는" 문제를 일으켰음.
+                                // DB liked 갱신은 toggleLike 과 SyncUtils 정식 동기화가 담당한다.
+                                // 새 곡(서버엔 있는데 DB에 아예 없는 곡)만 메타데이터 insert 해서 표시는 되게 함.
                                 try {
-                                    val serverLikedIds = songs.map { it.id }.toSet()
-                                    LogBuffer.log("LIKED 동기화 시작: 서버 곡 ${serverLikedIds.size}개")
-
-                                    // 1단계: 서버 목록의 곡을 DB에 insert + liked=true
-                                    var addedCount = 0
                                     songs.forEach { songItem ->
                                         try {
-                                            database.query { insert(songItem.toMediaMetadata()) }
                                             val existing = database.song(songItem.id).first()
-                                            if (existing != null && existing.song.liked != true) {
-                                                database.query {
-                                                    update(existing.song.copy(liked = true))
-                                                }
-                                                addedCount++
+                                            if (existing == null) {
+                                                // DB 에 없던 곡만 새로 insert (liked 는 toggleLike/정식동기화가 관리)
+                                                database.query { insert(songItem.toMediaMetadata()) }
                                             }
+                                            // 이미 DB 에 있는 곡의 liked 값은 절대 건드리지 않음
                                         } catch (e: Exception) {
-                                            LogBuffer.log("LIKED 동기화 insert 실패: id=${songItem.id}, ${e.message}")
+                                            LogBuffer.log("LIKED insert 실패: id=${songItem.id}, ${e.message}")
                                         }
                                     }
-                                    LogBuffer.log("LIKED 동기화 1단계 완료: liked=true 갱신 $addedCount 곡, ${System.currentTimeMillis() - syncStart}ms")
-
-                                    // 2단계 비활성화: YouTube API 응답이 폰과 다를 수 있어 위험
-                                    LogBuffer.log("LIKED 동기화 2단계 비활성화됨")
                                 } catch (e: Exception) {
-                                    LogBuffer.log("LIKED 동기화 전체 실패: ${e.message}")
+                                    LogBuffer.log("LIKED insert 전체 실패: ${e.message}")
                                 }
+
+                                // 차에서 방금 해제한 곡은 서버 LM 반영이 늦어 아직 목록에 남아있을 수 있다.
+                                // DB에 liked=false 로 명시적으로 저장된 곡은 화면에서 제외한다.
+                                // (DB에 없거나 liked=true 인 곡은 그대로 표시 → 폰에서 좋아요한 새 곡 정상 표시)
+                                val filteredSongs = songs.filter { songItem ->
+                                    val dbSong = try {
+                                        database.song(songItem.id).first()
+                                    } catch (e: Exception) {
+                                        null
+                                    }
+                                    dbSong?.song?.liked != false
+                                }
+                                LogBuffer.log("LIKED: DB 해제곡 제외 후 ${filteredSongs.size}개 (원본 ${songs.size}개)")
 
                                 val shuffleItem: MediaItem = MediaItem.Builder()
                                     .setMediaId("$parentId/${MusicService.SHUFFLE_ACTION}")
@@ -790,7 +794,7 @@ constructor(
                                             .build()
                                     ).build()
 
-                                val songItems: List<MediaItem> = songs.map { it.toCarMediaItem(parentId) }
+                                val songItems: List<MediaItem> = filteredSongs.map { it.toCarMediaItem(parentId) }
 
                                 listOf(shuffleItem) + songItems
                             } else {

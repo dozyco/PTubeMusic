@@ -2146,11 +2146,14 @@ object YouTube {
         videoId: String,
         like: Boolean,
     ) = runCatching {
-        if (like) {
+        val response = if (like) {
             innerTube.likeVideo(WEB_REMIX, videoId)
         } else {
             innerTube.unlikeVideo(WEB_REMIX, videoId)
         }
+        val bodyText = response.bodyAsText()
+        Timber.tag("PTUBE_LIKE").d("likeVideo id=$videoId like=$like status=${response.status} body=$bodyText")
+        response
     }
 
     suspend fun likePlaylist(
