@@ -52,7 +52,6 @@ import com.metrolist.music.constants.MediaSessionConstants
 import com.metrolist.music.ui.component.IconButton
 import com.metrolist.music.ui.component.Material3SettingsGroup
 import com.metrolist.music.ui.component.Material3SettingsItem
-import com.metrolist.music.ui.component.PreferenceEntry
 import com.metrolist.music.ui.utils.backToMain
 import com.metrolist.music.utils.rememberPreference
 import kotlinx.coroutines.flow.map
@@ -66,7 +65,7 @@ enum class AndroidAutoSection(val id: String) {
     ALBUMS("albums"),
     PLAYLISTS("playlists"),
 
-    RECOMMENDED("recommended"),
+    HOME("recommended"),
 }
 
 @Composable
@@ -76,7 +75,7 @@ fun AndroidAutoSection.label(): String = when (this) {
     AndroidAutoSection.ARTISTS -> stringResource(R.string.artists)
     AndroidAutoSection.ALBUMS -> stringResource(R.string.albums)
     AndroidAutoSection.PLAYLISTS -> stringResource(R.string.playlists)
-    AndroidAutoSection.RECOMMENDED -> stringResource(R.string.android_auto_recommended)
+    AndroidAutoSection.HOME -> stringResource(R.string.android_auto_recommended)
 }
 
 fun serializeSections(sections: List<Pair<AndroidAutoSection, Boolean>>): String =
@@ -186,7 +185,7 @@ fun AndroidAutoSettings(
                                         AndroidAutoSection.ARTISTS -> R.drawable.artist
                                         AndroidAutoSection.ALBUMS -> R.drawable.album
                                         AndroidAutoSection.PLAYLISTS -> R.drawable.queue_music
-                                        AndroidAutoSection.RECOMMENDED -> R.drawable.explore_outlined
+                                        AndroidAutoSection.HOME -> R.drawable.explore_outlined
                                     }
                                 ),
                                 title = { Text(section.label()) },

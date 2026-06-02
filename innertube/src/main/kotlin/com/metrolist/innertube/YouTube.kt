@@ -1018,38 +1018,59 @@ object YouTube {
                                 ?.watchPlaylistEndpoint,
                         isEditable = editable,
                     ),
-                songs =
-                    response.contents
-                        ?.twoColumnBrowseResultsRenderer
-                        ?.secondaryContents
-                        ?.sectionListRenderer
-                        ?.contents
-                        ?.firstOrNull()
-                        ?.musicPlaylistShelfRenderer
-                        ?.contents
-                        ?.getItems()
-                        ?.mapNotNull {
-                            PlaylistPage.fromMusicResponsiveListItemRenderer(it)
-                        } ?: emptyList(),
-                songsContinuation =
-                    response.contents
-                        ?.twoColumnBrowseResultsRenderer
-                        ?.secondaryContents
-                        ?.sectionListRenderer
-                        ?.contents
-                        ?.firstOrNull()
-                        ?.musicPlaylistShelfRenderer
-                        ?.contents
-                        ?.getContinuation()
-                        ?: response.contents
+                songs = run {
+                    val twoColShelf =
+                        response.contents
                             ?.twoColumnBrowseResultsRenderer
                             ?.secondaryContents
                             ?.sectionListRenderer
                             ?.contents
                             ?.firstOrNull()
                             ?.musicPlaylistShelfRenderer
-                            ?.continuations
-                            ?.getContinuation(),
+                    val singleColShelf =
+                        response.contents
+                            ?.singleColumnBrowseResultsRenderer
+                            ?.tabs
+                            ?.firstOrNull()
+                            ?.tabRenderer
+                            ?.content
+                            ?.sectionListRenderer
+                            ?.contents
+                            ?.firstOrNull()
+                            ?.musicPlaylistShelfRenderer
+                    val shelf = twoColShelf ?: singleColShelf
+                    val rawItems = shelf?.contents?.getItems()
+                    Timber.tag("PTUBE_LM").d(
+                        "playlist: twoCol=${twoColShelf != null}, singleCol=${singleColShelf != null}, " +
+                                "shelfContents=${shelf?.contents?.size}, items=${rawItems?.size}"
+                    )
+                    rawItems
+                        ?.mapNotNull { PlaylistPage.fromMusicResponsiveListItemRenderer(it) }
+                        ?: emptyList()
+                },
+                songsContinuation = run {
+                    val twoColShelf =
+                        response.contents
+                            ?.twoColumnBrowseResultsRenderer
+                            ?.secondaryContents
+                            ?.sectionListRenderer
+                            ?.contents
+                            ?.firstOrNull()
+                            ?.musicPlaylistShelfRenderer
+                    val singleColShelf =
+                        response.contents
+                            ?.singleColumnBrowseResultsRenderer
+                            ?.tabs
+                            ?.firstOrNull()
+                            ?.tabRenderer
+                            ?.content
+                            ?.sectionListRenderer
+                            ?.contents
+                            ?.firstOrNull()
+                            ?.musicPlaylistShelfRenderer
+                    val shelf = twoColShelf ?: singleColShelf
+                    shelf?.contents?.getContinuation() ?: shelf?.continuations?.getContinuation()
+                },
                 continuation =
                     response.contents
                         ?.twoColumnBrowseResultsRenderer

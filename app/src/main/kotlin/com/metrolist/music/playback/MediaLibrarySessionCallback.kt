@@ -7,7 +7,6 @@ package com.metrolist.music.playback
 
 import android.content.ContentResolver
 import android.content.Context
-import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import androidx.annotation.DrawableRes
@@ -24,7 +23,6 @@ import androidx.media3.session.MediaSession.MediaItemsWithStartPosition
 import androidx.media3.session.SessionCommand
 import androidx.media3.session.SessionError
 import androidx.media3.session.SessionResult
-import coil3.imageLoader
 import com.google.common.collect.ImmutableList
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
@@ -37,16 +35,12 @@ import com.metrolist.innertube.models.SongItem
 import com.metrolist.innertube.models.filterExplicit
 import com.metrolist.innertube.models.filterVideoSongs
 import com.metrolist.innertube.utils.completed
-import com.metrolist.innertube.utils.parseCookieString
 import com.metrolist.music.R
-import com.metrolist.music.automotive.AutomotiveLoginActivity
 import com.metrolist.music.constants.AndroidAutoSectionsOrderKey
 import com.metrolist.music.constants.AndroidAutoYouTubePlaylistsKey
 import com.metrolist.music.constants.HideExplicitKey
 import com.metrolist.music.constants.HideVideoSongsKey
-import com.metrolist.music.constants.InnerTubeCookieKey
 import com.metrolist.music.constants.MediaSessionConstants
-import com.metrolist.music.constants.SongSortType
 import com.metrolist.music.db.MusicDatabase
 import com.metrolist.music.db.entities.PlaylistEntity
 import com.metrolist.music.db.entities.Song
@@ -54,7 +48,6 @@ import com.metrolist.music.extensions.toMediaItem
 import com.metrolist.music.extensions.toggleRepeatMode
 import com.metrolist.music.models.toMediaMetadata
 import com.metrolist.music.ui.screens.settings.AndroidAutoSection
-import com.metrolist.music.ui.screens.settings.deserializeSections
 import com.metrolist.music.ui.screens.settings.serializeSections
 import com.metrolist.music.utils.dataStore
 import com.metrolist.music.utils.get
@@ -262,9 +255,9 @@ constructor(
                         serializeSections(AndroidAutoSection.values().map { it to true })
                     )
                     val sections = listOf(
+                        AndroidAutoSection.HOME to true,  // Home (맨 앞으로)
                         AndroidAutoSection.LIKED to true,
                         AndroidAutoSection.ARTISTS to true,
-                        AndroidAutoSection.RECOMMENDED to true,
                         AndroidAutoSection.PLAYLISTS to true,
                     )
                     val showYoutubePlaylists = context.dataStore.get(AndroidAutoYouTubePlaylistsKey, false)
@@ -308,11 +301,11 @@ constructor(
                                     drawableUri(R.drawable.queue_music),
                                     MediaMetadata.MEDIA_TYPE_FOLDER_PLAYLISTS,
                                 )
-                                AndroidAutoSection.RECOMMENDED -> browsableMediaItem(
+                                AndroidAutoSection.HOME -> browsableMediaItem(
                                     MusicService.RECOMMENDED,
                                     context.getString(R.string.android_auto_recommended),
                                     null,
-                                    drawableUri(R.drawable.explore_outlined),
+                                    drawableUri(R.drawable.home_filled),
                                     MediaMetadata.MEDIA_TYPE_FOLDER_MIXED,
                                 )
                             }
@@ -546,48 +539,128 @@ constructor(
 
                         for (page in 0 until maxPages) {
                             val homeStart = System.currentTimeMillis()
-                            LogBuffer.log("YouTube.home() 호출 시작 (RECOMMENDED, page=$page)")
+                            LogBuffer.log("YouTube.home() 호출 시작 (HOME, page=$page)")
                             val result = withTimeoutOrNull(10_000) {
                                 YouTube.home(continuation)
-                                    .onFailure { LogBuffer.log("YouTube.home() 실패 (RECOMMENDED, page=$page): ${it.message}"); reportException(it) }
+                                    .onFailure { LogBuffer.log("YouTube.home() 실패 (HOME, page=$page): ${it.message}"); reportException(it) }
                                     .getOrNull()
                             } ?: run {
-                                LogBuffer.log("YouTube.home() 타임아웃 (RECOMMENDED, page=$page, 10초)")
+                                LogBuffer.log("YouTube.home() 타임아웃 (HOME, page=$page, 10초)")
                                 null
                             }
-                            LogBuffer.log("YouTube.home() 완료 (RECOMMENDED, page=$page), ${System.currentTimeMillis() - homeStart}ms, sections=${result?.sections?.size ?: -1}")
+                            LogBuffer.log("YouTube.home() 완료 (HOME, page=$page), ${System.currentTimeMillis() - homeStart}ms, sections=${result?.sections?.size ?: -1}")
                             if (result == null) break
                             allSections.addAll(result.sections)
                             continuation = result.continuation
                             if (continuation == null) break
                         }
 
-                        // 추천 페이지의 PlaylistItem (믹스/플레이리스트) 모으기
-                        val playlists = allSections
-                            .flatMap { it.items }
-                            .filterIsInstance<PlaylistItem>()
-                            .distinctBy { it.id }
-                        LogBuffer.log("RECOMMENDED playlists count=${playlists.size}")
+                        val hideExplicit = context.dataStore.get(HideExplicitKey, false)
+                        val hideVideoSongs = context.dataStore.get(HideVideoSongsKey, false)
 
-                        // lastRecommendedSongs 는 곡 캐싱 (재생용으로 다른 곳에서 쓰일 수 있어 유지)
-                        val songs = allSections
+                        // 재생용 곡 캐싱 (RECOMMENDED/songId 분기에서 사용)
+                        val allHomeSongs = allSections
                             .flatMap { it.items }
                             .filterIsInstance<SongItem>()
-                            .filterExplicit(context.dataStore.get(HideExplicitKey, false))
-                            .filterVideoSongs(context.dataStore.get(HideVideoSongsKey, false))
+                            .filterExplicit(hideExplicit)
+                            .filterVideoSongs(hideVideoSongs)
                             .distinctBy { it.id }
-                        lastRecommendedSongs = songs
+                        lastRecommendedSongs = allHomeSongs
 
-                        // 각 플레이리스트를 browsable MediaItem 으로 (클릭 시 그 안의 곡 표시)
-                        playlists.map { playlist ->
-                            browsableMediaItemWithArtwork(
-                                "${MusicService.YOUTUBE_PLAYLIST}/${playlist.id}",
-                                playlist.title,
-                                playlist.author?.name,
-                                playlist.thumbnail,
-                                MediaMetadata.MEDIA_TYPE_PLAYLIST,
-                            )
+                        // 공식 YouTube Music 홈처럼 "섹션 제목 + 그 아래 아이템들" 구조로 만든다.
+                        // 각 섹션의 title 을 그룹 헤더(CONTENT_STYLE_GROUP_TITLE_HINT)로 박는다.
+                        val items = mutableListOf<MediaItem>()
+
+                        allSections.forEach { section ->
+                            val groupHint = section.title  // 섹션 제목 = 그룹 헤더
+                            section.items.forEach { ytItem ->
+                                val mediaItem: MediaItem? = when (ytItem) {
+                                    is SongItem -> {
+                                        // 자동 재생 가능한 곡: RECOMMENDED/곡id 로 → onSetMediaItems 에서 재생
+                                        MediaItem.Builder()
+                                            .setMediaId("${MusicService.RECOMMENDED}/${ytItem.id}")
+                                            .setMediaMetadata(
+                                                MediaMetadata.Builder()
+                                                    .setTitle(ytItem.title)
+                                                    .setSubtitle(ytItem.artists.joinToString(", ") { it.name })
+                                                    .setArtist(ytItem.artists.joinToString(", ") { it.name })
+                                                    .setArtworkUri(ytItem.thumbnail?.toUri()?.let { AlbumArtContentProvider.mapUri(it) })
+                                                    .setIsPlayable(true)
+                                                    .setIsBrowsable(false)
+                                                    .setMediaType(MediaMetadata.MEDIA_TYPE_MUSIC)
+                                                    .setExtras(android.os.Bundle().apply {
+                                                        putString("android.media.browse.CONTENT_STYLE_GROUP_TITLE_HINT", groupHint)
+                                                    })
+                                                    .build()
+                                            ).build()
+                                    }
+                                    is PlaylistItem -> {
+                                        // 자동 플레이리스트(LM/SE)는 제외
+                                        if (ytItem.id == "LM" || ytItem.id == "SE" || ytItem.id == "VLLM" || ytItem.id == "VLSE") {
+                                            null
+                                        } else {
+                                            MediaItem.Builder()
+                                                .setMediaId("${MusicService.YOUTUBE_PLAYLIST}/${ytItem.id}")
+                                                .setMediaMetadata(
+                                                    MediaMetadata.Builder()
+                                                        .setTitle(ytItem.title)
+                                                        .setSubtitle(ytItem.author?.name)
+                                                        .setArtist(ytItem.author?.name)
+                                                        .setArtworkUri(ytItem.thumbnail?.toUri()?.let { AlbumArtContentProvider.mapUri(it) })
+                                                        .setIsPlayable(false)
+                                                        .setIsBrowsable(true)
+                                                        .setMediaType(MediaMetadata.MEDIA_TYPE_PLAYLIST)
+                                                        .setExtras(android.os.Bundle().apply {
+                                                            putString("android.media.browse.CONTENT_STYLE_GROUP_TITLE_HINT", groupHint)
+                                                        })
+                                                        .build()
+                                                ).build()
+                                        }
+                                    }
+                                    is AlbumItem -> {
+                                        MediaItem.Builder()
+                                            .setMediaId("${MusicService.ALBUM}/${ytItem.browseId}")
+                                            .setMediaMetadata(
+                                                MediaMetadata.Builder()
+                                                    .setTitle(ytItem.title)
+                                                    .setSubtitle(ytItem.artists?.joinToString(", ") { it.name })
+                                                    .setArtist(ytItem.artists?.joinToString(", ") { it.name })
+                                                    .setArtworkUri(ytItem.thumbnail?.toUri()?.let { AlbumArtContentProvider.mapUri(it) })
+                                                    .setIsPlayable(false)
+                                                    .setIsBrowsable(true)
+                                                    .setMediaType(MediaMetadata.MEDIA_TYPE_ALBUM)
+                                                    .setExtras(android.os.Bundle().apply {
+                                                        putString("android.media.browse.CONTENT_STYLE_GROUP_TITLE_HINT", groupHint)
+                                                    })
+                                                    .build()
+                                            ).build()
+                                    }
+                                    is ArtistItem -> {
+                                        MediaItem.Builder()
+                                            .setMediaId("${MusicService.ARTIST}/${ytItem.id}")
+                                            .setMediaMetadata(
+                                                MediaMetadata.Builder()
+                                                    .setTitle(ytItem.title)
+                                                    .setSubtitle("Artist")
+                                                    .setArtist("Artist")
+                                                    .setArtworkUri(ytItem.thumbnail?.toUri()?.let { AlbumArtContentProvider.mapUri(it) })
+                                                    .setIsPlayable(false)
+                                                    .setIsBrowsable(true)
+                                                    .setMediaType(MediaMetadata.MEDIA_TYPE_ARTIST)
+                                                    .setExtras(android.os.Bundle().apply {
+                                                        putString("android.media.browse.CONTENT_STYLE_GROUP_TITLE_HINT", groupHint)
+                                                    })
+                                                    .build()
+                                            ).build()
+                                    }
+                                    else -> null
+                                }
+                                if (mediaItem != null) items.add(mediaItem)
+                            }
                         }
+
+                        LogBuffer.log("HOME 섹션 ${allSections.size}개, 표시 아이템 ${items.size}개")
+                        items
                     } catch (e: Exception) {
                         reportException(e)
                         emptyList()
@@ -746,21 +819,51 @@ constructor(
                                     emptyList()
                                 }
 
-                                // 서버 LM 목록을 DB에 무조건 liked=true 로 반영하던 "동기화 1단계"는 제거함.
-                                // 이유: MV 등 일부 곡은 removelike 해도 서버 LM 에 남아있는데,
-                                // 1단계가 그걸 보고 DB 를 도로 liked=true 로 되살려서
-                                // "해제했는데 다시 재생하면 하트가 켜져있고 목록에서도 안 빠지는" 문제를 일으켰음.
-                                // DB liked 갱신은 toggleLike 과 SyncUtils 정식 동기화가 담당한다.
-                                // 새 곡(서버엔 있는데 DB에 아예 없는 곡)만 메타데이터 insert 해서 표시는 되게 함.
+                                // 동기화 1단계(서버 LM 을 무조건 liked=true 로 되살리던 코드)는 제거됨.
+                                // 화면 표시: 서버 LM 목록을 그대로 보여주되, 차에서 명시적으로 해제한 곡만 제외.
+                                //
+                                // 중요: 필터를 insert 보다 "먼저" 실행한다.
+                                // SongItem.toMediaMetadata() 는 liked 기본값이 false 라서,
+                                // insert 를 먼저 하면 새 곡이 전부 DB 에 liked=false 로 들어가고
+                                // 필터가 그걸 다 걸러내 버린다(재설치 후 DB 가 비면 좋아요 탭이 통째로 사라짐).
+                                // 그래서 "지금 DB 에 이미 liked=false 로 저장돼 있는 곡"만 제외하고,
+                                // 그 판단이 끝난 뒤에 insert 한다.
+                                val explicitlyUnliked = try {
+                                    songs.mapNotNull { songItem ->
+                                        val dbSong = try {
+                                            database.song(songItem.id).first()
+                                        } catch (e: Exception) {
+                                            null
+                                        }
+                                        // DB 에 곡이 존재하고 + liked 가 명시적으로 false 인 곡만 "해제됨" 으로 본다.
+                                        if (dbSong != null && dbSong.song.liked == false) songItem.id else null
+                                    }.toSet()
+                                } catch (e: Exception) {
+                                    LogBuffer.log("LIKED 해제곡 판별 실패: ${e.message}")
+                                    emptySet()
+                                }
+
+                                val filteredSongs = songs
+                                    .distinctBy { it.id }                 // 서버 LM 중복곡 화면 중복 방지
+                                    .filterNot { it.id in explicitlyUnliked }  // 차에서 해제한 곡만 제외
+                                LogBuffer.log("LIKED: 해제곡 ${explicitlyUnliked.size}개 제외 후 ${filteredSongs.size}개 (원본 ${songs.size}개)")
+
+                                // 표시 판단이 끝났으니 이제 새 곡을 DB 에 insert (없는 곡만).
+                                // 중요: LIKED 탭의 곡은 서버 LM 에 있는 = 좋아요된 곡이므로 liked=true 로 넣는다.
+                                // (toMediaMetadata() 는 liked 기본값이 false 라서, 그냥 insert 하면
+                                //  새 곡이 전부 false 로 저장되고 → 다음 진입 때 우리 필터가 그걸
+                                //  "해제곡"으로 오판해 다 걸러버린다. 그래서 명시적으로 true 로 저장.)
+                                // 기존에 DB 에 있던 곡은 절대 안 건드림(차에서 해제한 곡 보존).
                                 try {
                                     songs.forEach { songItem ->
                                         try {
                                             val existing = database.song(songItem.id).first()
                                             if (existing == null) {
-                                                // DB 에 없던 곡만 새로 insert (liked 는 toggleLike/정식동기화가 관리)
-                                                database.query { insert(songItem.toMediaMetadata()) }
+                                                val metadata = songItem.toMediaMetadata()
+                                                database.query {
+                                                    insert(metadata.copy(liked = true))
+                                                }
                                             }
-                                            // 이미 DB 에 있는 곡의 liked 값은 절대 건드리지 않음
                                         } catch (e: Exception) {
                                             LogBuffer.log("LIKED insert 실패: id=${songItem.id}, ${e.message}")
                                         }
@@ -768,21 +871,6 @@ constructor(
                                 } catch (e: Exception) {
                                     LogBuffer.log("LIKED insert 전체 실패: ${e.message}")
                                 }
-
-                                // 차에서 방금 해제한 곡은 서버 LM 반영이 늦어 아직 목록에 남아있을 수 있다.
-                                // DB에 liked=false 로 명시적으로 저장된 곡은 화면에서 제외한다.
-                                // (DB에 없거나 liked=true 인 곡은 그대로 표시 → 폰에서 좋아요한 새 곡 정상 표시)
-                                val filteredSongs = songs
-                                    .distinctBy { it.id }   // 서버 LM 이 같은 곡을 중복으로 줄 때 화면 중복 방지
-                                    .filter { songItem ->
-                                        val dbSong = try {
-                                            database.song(songItem.id).first()
-                                        } catch (e: Exception) {
-                                            null
-                                        }
-                                        dbSong?.song?.liked != false
-                                    }
-                                LogBuffer.log("LIKED: DB 해제곡 제외 후 ${filteredSongs.size}개 (원본 ${songs.size}개, 중복제거 적용)")
 
                                 val shuffleItem: MediaItem = MediaItem.Builder()
                                     .setMediaId("$parentId/${MusicService.SHUFFLE_ACTION}")

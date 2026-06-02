@@ -9,6 +9,7 @@ import com.metrolist.innertube.models.oddElements
 import com.metrolist.innertube.models.splitBySeparator
 import com.metrolist.innertube.utils.parseTime
 
+
 data class PlaylistPage(
     val playlist: PlaylistItem,
     val songs: List<SongItem>,
@@ -29,7 +30,10 @@ data class PlaylistPage(
                 ?.splitBySeparator()
 
             return SongItem(
-                id = renderer.playlistItemData?.videoId ?: return null,
+                id = (renderer.playlistItemData?.videoId
+                    ?: renderer.overlay?.musicItemThumbnailOverlayRenderer?.content
+                        ?.musicPlayButtonRenderer?.playNavigationEndpoint?.watchEndpoint?.videoId)
+                    ?: return null,
                 title = renderer.flexColumns.firstOrNull()
                     ?.musicResponsiveListItemFlexColumnRenderer?.text
                     ?.runs?.firstOrNull()?.text ?: return null,
@@ -52,7 +56,7 @@ data class PlaylistPage(
                     it.musicInlineBadgeRenderer?.icon?.iconType == "MUSIC_EXPLICIT_BADGE"
                 } != null,
                 endpoint = renderer.overlay?.musicItemThumbnailOverlayRenderer?.content?.musicPlayButtonRenderer?.playNavigationEndpoint?.watchEndpoint,
-                setVideoId = renderer.playlistItemData.playlistSetVideoId ?: return null,
+                setVideoId = renderer.playlistItemData?.playlistSetVideoId,
                 libraryAddToken = libraryTokens.addToken,
                 libraryRemoveToken = libraryTokens.removeToken,
                 isEpisode = renderer.isEpisode
