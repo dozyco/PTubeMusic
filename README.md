@@ -1,18 +1,20 @@
 # PTubeMusic
 
-**Polestar 4 (AAOS) YouTube Music client** — Fork of [Metrolist](https://github.com/mostafaalagamy/Metrolist)
+**Polestar 4 (AAOS) YouTube Music client** — Fork of [Metrolist](https://github.com/MetrolistGroup/Metrolist)
 
 ## 소개
 
 PTubeMusic 은 Polestar 4 (Android Automotive OS) 차량에서 사용 가능한 YouTube Music 클라이언트입니다.
 
-오픈소스 [Metrolist](https://github.com/mostafaalagamy/Metrolist) 프로젝트를 기반으로 차량 환경에 맞춰 수정/추가 작업했습니다.
+오픈소스 [Metrolist](https://github.com/MetrolistGroup/Metrolist) 프로젝트를 기반으로 차량 환경에 맞춰 수정/추가 작업했습니다.
 
 모든 작업은 Claude AI를 이용하여 수정했습니다.
 
 ## 주요 기능
 
 * **차량 친화 UI** — AAOS 미디어 브라우저 인터페이스 지원
+* **모바일 UI 지원** — 위젯을 누르면 차량(AAOS)용 앱이, 애플리케이션 메뉴에서 누르면 모바일 버전 앱이 실행됩니다. 두 앱은 서로 연동되어 동작합니다. (단, 모바일 버전 앱은 AAOS 안전 규정상 주행 중에는 실행되지 않습니다.)
+* **홈 화면** — 기존 AAOS용 YouTube Music 과 유사한 형태로 목록을 표시
 * **좋아요 곡** — YouTube Music 의 좋아요 한 곡 (LM 플레이리스트) 표시, 차량에서 좋아요/해제 시 양방향 동기화
 * **아티스트** — 라이브러리에 저장된 아티스트를 큰 카드로 표시
 * **검색** — 카테고리별 결과 표시 (Top result / Songs / Albums / Artists / Videos)
@@ -23,39 +25,57 @@ PTubeMusic 은 Polestar 4 (Android Automotive OS) 차량에서 사용 가능한 
 
 ## 로그인 방법
 
-### 1. 시크릿 모드 열기
+로그인 방식은 두 가지입니다. **아이디/비밀번호 로그인**을 권장하며, 기존 **쿠키 로그인**도 그대로 사용할 수 있습니다.
+
+### 방법 1. 아이디/비밀번호 로그인 (권장)
+
+1. 애플리케이션 메뉴에서 PTubeMusic 을 눌러 **모바일 버전 앱**을 실행합니다.
+2. **프로필 모양 아이콘**을 누릅니다.
+3. 본인 Google 계정으로 로그인합니다.
+
+> **참고:** 로그인 시 비밀번호가 입력되지 않는 문제가 있습니다 (폴스타 자체 버그로 추정). 이 경우 아래 순서로 해결할 수 있습니다.
+>
+> 1. 시스템 → 애플리케이션 → PTubeMusic 에서 앱을 강제 종료
+> 2. 차량 언어를 영어로 변경
+> 3. 다시 로그인 시도 → 비밀번호 입력 가능
+
+### 방법 2. 쿠키 로그인
+
+브라우저에서 쿠키를 추출해 입력하는 방식입니다.
+
+#### 1. 시크릿 모드 열기
 
 * Chrome / Edge: `Ctrl + Shift + N`
 * Firefox: `Ctrl + Shift + P`
 
 > 시크릿 모드에서 추출하면 쿠키가 훨씬 오래 유지됩니다. (일반 창의 쿠키는 자주 갱신되어 빨리 만료됩니다.)
 
-### 2. YouTube Music 접속 + 로그인
+#### 2. YouTube Music 접속 + 로그인
 
 * 주소창에 `https://music.youtube.com` 입력
 * 본인 Google 계정으로 로그인
 * 로그인 완료 후 본인 라이브러리 (좋아요 곡 등) 정상 표시되는지 확인
 
-### 3. 개발자 도구 열기
+#### 3. 개발자 도구 열기
 
 * `F12` 누르기
 * 또는 `Ctrl + Shift + I`
 
-### 4. Network 탭으로 이동
+#### 4. Network 탭으로 이동
 
 * 개발자 도구 상단의 Network 탭 클릭
 
-### 5. 페이지 새로고침
+#### 5. 페이지 새로고침
 
 * `F5` 또는 `Ctrl + R`
 * Network 탭에 요청 목록이 쭉 나타남
 
-### 6. 요청 찾기
+#### 6. 요청 찾기
 
 * Network 탭 좌측 필터창에 `browse` 입력
 * 결과 중 아무거나 (보통 `browse?...` 같은 이름) 클릭
 
-### 7. 쿠키 복사
+#### 7. 쿠키 복사
 
 * 우측 패널의 Headers 탭 선택
 * 아래로 스크롤 → Request Headers 섹션 찾기
@@ -66,22 +86,30 @@ PTubeMusic 은 Polestar 4 (Android Automotive OS) 차량에서 사용 가능한 
 
 > **중요:** 브라우저 확장(Cookie-Editor 등)으로 추출하면 `SID` 등 일부 인증 쿠키가 누락될 수 있습니다. 위의 F12 → Network → cookie 값 복사 방법이 가장 완전합니다.
 
-### 8. PTubeMusic 에 쿠키 입력
+#### 8. PTubeMusic 에 쿠키 입력
 
 * 폴스타4 차량에서 PTubeMusic 실행
 * 설정 → 계정 → 쿠키 입력 메뉴 진입
 * 복사한 쿠키 전체를 붙여넣기
 * 저장
 
-### 9. 로그인 확인
+#### 9. 로그인 확인
 
 * 라이브러리 탭 진입
 * 본인 좋아요 곡, 아티스트, 플레이리스트 등이 정상 표시되면 성공
 
-### 10. 시크릿 창 닫기
+#### 10. 시크릿 창 닫기
 
 * 쿠키를 뽑은 시크릿 창은 **로그아웃하지 말고 그냥 닫으세요.**
 * 세션이 다시 열리지 않아야 쿠키가 오래 유지됩니다.
+
+## 기존 버전 사용자 안내
+
+> **기존 버전을 사용하셨던 분들은 캐시를 먼저 제거한 후 설치해야 합니다.**
+>
+> 시스템 → 애플리케이션 → PTubeMusic → 저장용량 및 캐시 → 저장용량 비우기
+>
+> 위 순서로 캐시를 제거하지 않고 설치하면 정상 동작하지 않을 수 있습니다.
 
 ## 주의사항
 
@@ -97,6 +125,7 @@ PTubeMusic 은 쿠키 만료를 자동 감지합니다. 만료 시 알림이 뜨
 * 비공식 앱입니다. YouTube/Google 과 무관합니다.
 * 사용은 본인 책임 하에 하세요.
 * 광고 차단/우회 목적이 아니며, YouTube Premium 를 가입하지 않으면 앱이 작동하지 않습니다.
+* 모바일 버전 앱은 아직 다소 버벅임이 있습니다. 최적화가 가능한지 계속 연구하겠습니다.
 * 언제든지 앱 작동이 되지 않을수 있습니다.
 
 ## 라이선스
@@ -109,7 +138,7 @@ PTubeMusic 은 쿠키 만료를 자동 감지합니다. 만료 시 알림이 뜨
 
 ## 출처
 
-* 원본 프로젝트: [Metrolist](https://github.com/mostafaalagamy/Metrolist)
+* 원본 프로젝트: [Metrolist](https://github.com/MetrolistGroup/Metrolist)
 * 본 프로젝트: [PTubeMusic](https://github.com/dozyco/PTubeMusic)
 
 ---
