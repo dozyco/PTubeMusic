@@ -51,16 +51,20 @@ suspend fun Result<LibraryPage>.completed(): Result<LibraryPage> = runCatching {
     var requestCount = 0
     val maxRequests = 50
     var consecutiveEmptyResponses = 0
-    
+
+
+
     while (continuation != null && requestCount < maxRequests) {
         if (continuation in seenContinuations) {
             break
         }
         seenContinuations.add(continuation)
         requestCount++
-        
-        val continuationPage = YouTube.libraryContinuation(continuation).getOrNull() ?: break
-        
+
+        val continuationPage = YouTube.libraryContinuation(continuation).getOrNull()
+
+        if (continuationPage == null) break
+
         if (continuationPage.items.isEmpty()) {
             consecutiveEmptyResponses++
             if (consecutiveEmptyResponses >= 2) break
@@ -68,9 +72,10 @@ suspend fun Result<LibraryPage>.completed(): Result<LibraryPage> = runCatching {
             consecutiveEmptyResponses = 0
             items += continuationPage.items
         }
-        
+
         continuation = continuationPage.continuation
     }
+
     LibraryPage(
         items = items,
         continuation = null

@@ -1040,10 +1040,6 @@ object YouTube {
                             ?.musicPlaylistShelfRenderer
                     val shelf = twoColShelf ?: singleColShelf
                     val rawItems = shelf?.contents?.getItems()
-                    Timber.tag("PTUBE_LM").d(
-                        "playlist: twoCol=${twoColShelf != null}, singleCol=${singleColShelf != null}, " +
-                                "shelfContents=${shelf?.contents?.size}, items=${rawItems?.size}"
-                    )
                     rawItems
                         ?.mapNotNull { PlaylistPage.fromMusicResponsiveListItemRenderer(it) }
                         ?: emptyList()
@@ -1729,6 +1725,8 @@ object YouTube {
                     null
                 }
 
+
+
             when {
                 contents?.gridRenderer != null -> {
                     val gridItems = contents.gridRenderer.items
@@ -1784,14 +1782,12 @@ object YouTube {
                 }
 
                 else -> { // contents?.musicShelfContinuation != null
+                    val rawContents = contents?.musicShelfContinuation?.contents
+                    val rawRenderers = rawContents?.mapNotNull(MusicShelfRenderer.Content::musicResponsiveListItemRenderer)
+                    val parsed = rawRenderers?.mapNotNull { LibraryPage.fromMusicResponsiveListItemRenderer(it) }
                     LibraryContinuationPage(
-                        items =
-                            contents
-                                ?.musicShelfContinuation
-                                ?.contents!!
-                                .mapNotNull(MusicShelfRenderer.Content::musicResponsiveListItemRenderer)
-                                .mapNotNull { LibraryPage.fromMusicResponsiveListItemRenderer(it) },
-                        continuation = contents.musicShelfContinuation.continuations?.getContinuation(),
+                        items = parsed ?: emptyList(),
+                        continuation = contents?.musicShelfContinuation?.continuations?.getContinuation(),
                     )
                 }
             }

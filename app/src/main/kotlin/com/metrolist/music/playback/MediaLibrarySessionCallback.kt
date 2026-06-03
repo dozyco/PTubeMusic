@@ -85,6 +85,7 @@ constructor(
     private var lastSearchSongs: List<SongItem> = emptyList()
     @Volatile
     private var lastRecommendedSongs: List<SongItem> = emptyList()
+    private var lastHomeSections: List<com.metrolist.innertube.pages.HomePage.Section> = emptyList()
 
     fun release() {
         scope.cancel()
@@ -365,24 +366,35 @@ constructor(
 
                 MusicService.ARTIST -> {
                     val artistStart = System.currentTimeMillis()
-                    LogBuffer.log("YouTube.library(FEmusic_library_corpus_artists) 호출 시작")
-                    val artistList: List<ArtistItem> = try {
-                        val result = withTimeoutOrNull(10_000) {
+                    LogBuffer.log("YouTube.library(corpus_artists) + libraryPodcastChannels 호출 시작")
+
+                    // 1) 음악 아티스트 구독
+                    val musicArtists: List<ArtistItem> = try {
+                        withTimeoutOrNull(10_000) {
                             YouTube.library("FEmusic_library_corpus_artists").completed().getOrNull()
                                 ?.items?.filterIsInstance<ArtistItem>()
-                                ?: emptyList()
-                        } ?: run {
-                            LogBuffer.log("YouTube.library(ARTIST) 타임아웃 (10초)")
-                            emptyList()
                         }
-                        LogBuffer.log("YouTube.library(FEmusic_library_corpus_artists) 완료, ${System.currentTimeMillis() - artistStart}ms, artists=${result.size}")
-                        result
                     } catch (e: Exception) {
-                        LogBuffer.log("YouTube.library(FEmusic_library_corpus_artists) 실패, ${System.currentTimeMillis() - artistStart}ms: ${e.message}")
-                        reportException(e)
-                        emptyList()
-                    }
+                        LogBuffer.log("corpus_artists 실패: ${e.message}")
+                        null
+                    } ?: emptyList()
 
+                    // 2) 일반 채널 구독 (음악 아닌 채널)
+                    val otherChannels: List<ArtistItem> = try {
+                        withTimeoutOrNull(10_000) {
+                            YouTube.libraryPodcastChannels().getOrNull()
+                                ?.items?.filterIsInstance<ArtistItem>()
+                        }
+                    } catch (e: Exception) {
+                        LogBuffer.log("libraryPodcastChannels 실패: ${e.message}")
+                        null
+                    } ?: emptyList()
+
+                    // 3) 합치고 중복 제거 (id 기준)
+                    val artistList: List<ArtistItem> =
+                        (musicArtists + otherChannels).distinctBy { it.id }
+
+                    LogBuffer.log("ARTIST 음악=${musicArtists.size}, 일반채널=${otherChannels.size}, 합계=${artistList.size}")
                     LogBuffer.log("ARTIST count=${artistList.size}, first=${artistList.firstOrNull()?.title}")
 
                     artistList.map { artist ->
@@ -566,100 +578,48 @@ constructor(
                             .filterVideoSongs(hideVideoSongs)
                             .distinctBy { it.id }
                         lastRecommendedSongs = allHomeSongs
+                        lastHomeSections = allSections   // ← 폴더 클릭 시 재호출 없이 쓰려고 캐싱
 
-                        // 공식 YouTube Music 홈처럼 "섹션 제목 + 그 아래 아이템들" 구조로 만든다.
-                        // 각 섹션의 title 을 그룹 헤더(CONTENT_STYLE_GROUP_TITLE_HINT)로 박는다.
+                        // 홈 탭 = 섹션마다 폴더 하나. 폴더를 누르면 그 섹션 내용이 나오는 2단 구조.
                         val items = mutableListOf<MediaItem>()
+                        val seenTitles = mutableSetOf<String>()
 
                         allSections.forEach { section ->
-                            val groupHint = section.title  // 섹션 제목 = 그룹 헤더
-                            section.items.forEach { ytItem ->
-                                val mediaItem: MediaItem? = when (ytItem) {
-                                    is SongItem -> {
-                                        // 자동 재생 가능한 곡: RECOMMENDED/곡id 로 → onSetMediaItems 에서 재생
-                                        MediaItem.Builder()
-                                            .setMediaId("${MusicService.RECOMMENDED}/${ytItem.id}")
-                                            .setMediaMetadata(
-                                                MediaMetadata.Builder()
-                                                    .setTitle(ytItem.title)
-                                                    .setSubtitle(ytItem.artists.joinToString(", ") { it.name })
-                                                    .setArtist(ytItem.artists.joinToString(", ") { it.name })
-                                                    .setArtworkUri(ytItem.thumbnail?.toUri()?.let { AlbumArtContentProvider.mapUri(it) })
-                                                    .setIsPlayable(true)
-                                                    .setIsBrowsable(false)
-                                                    .setMediaType(MediaMetadata.MEDIA_TYPE_MUSIC)
-                                                    .setExtras(android.os.Bundle().apply {
-                                                        putString("android.media.browse.CONTENT_STYLE_GROUP_TITLE_HINT", groupHint)
-                                                    })
-                                                    .build()
-                                            ).build()
-                                    }
-                                    is PlaylistItem -> {
-                                        // 자동 플레이리스트(LM/SE)는 제외
-                                        if (ytItem.id == "LM" || ytItem.id == "SE" || ytItem.id == "VLLM" || ytItem.id == "VLSE") {
-                                            null
-                                        } else {
-                                            MediaItem.Builder()
-                                                .setMediaId("${MusicService.YOUTUBE_PLAYLIST}/${ytItem.id}")
-                                                .setMediaMetadata(
-                                                    MediaMetadata.Builder()
-                                                        .setTitle(ytItem.title)
-                                                        .setSubtitle(ytItem.author?.name)
-                                                        .setArtist(ytItem.author?.name)
-                                                        .setArtworkUri(ytItem.thumbnail?.toUri()?.let { AlbumArtContentProvider.mapUri(it) })
-                                                        .setIsPlayable(false)
-                                                        .setIsBrowsable(true)
-                                                        .setMediaType(MediaMetadata.MEDIA_TYPE_PLAYLIST)
-                                                        .setExtras(android.os.Bundle().apply {
-                                                            putString("android.media.browse.CONTENT_STYLE_GROUP_TITLE_HINT", groupHint)
-                                                        })
-                                                        .build()
-                                                ).build()
-                                        }
-                                    }
-                                    is AlbumItem -> {
-                                        MediaItem.Builder()
-                                            .setMediaId("${MusicService.ALBUM}/${ytItem.browseId}")
-                                            .setMediaMetadata(
-                                                MediaMetadata.Builder()
-                                                    .setTitle(ytItem.title)
-                                                    .setSubtitle(ytItem.artists?.joinToString(", ") { it.name })
-                                                    .setArtist(ytItem.artists?.joinToString(", ") { it.name })
-                                                    .setArtworkUri(ytItem.thumbnail?.toUri()?.let { AlbumArtContentProvider.mapUri(it) })
-                                                    .setIsPlayable(false)
-                                                    .setIsBrowsable(true)
-                                                    .setMediaType(MediaMetadata.MEDIA_TYPE_ALBUM)
-                                                    .setExtras(android.os.Bundle().apply {
-                                                        putString("android.media.browse.CONTENT_STYLE_GROUP_TITLE_HINT", groupHint)
-                                                    })
-                                                    .build()
-                                            ).build()
-                                    }
-                                    is ArtistItem -> {
-                                        MediaItem.Builder()
-                                            .setMediaId("${MusicService.ARTIST}/${ytItem.id}")
-                                            .setMediaMetadata(
-                                                MediaMetadata.Builder()
-                                                    .setTitle(ytItem.title)
-                                                    .setSubtitle("Artist")
-                                                    .setArtist("Artist")
-                                                    .setArtworkUri(ytItem.thumbnail?.toUri()?.let { AlbumArtContentProvider.mapUri(it) })
-                                                    .setIsPlayable(false)
-                                                    .setIsBrowsable(true)
-                                                    .setMediaType(MediaMetadata.MEDIA_TYPE_ARTIST)
-                                                    .setExtras(android.os.Bundle().apply {
-                                                        putString("android.media.browse.CONTENT_STYLE_GROUP_TITLE_HINT", groupHint)
-                                                    })
-                                                    .build()
-                                            ).build()
-                                    }
+                            val title = section.title
+                            if (title.isNullOrBlank()) return@forEach
+                            if (!seenTitles.add(title)) return@forEach
+
+                            val firstThumb = section.items.firstOrNull()?.let { item ->
+                                when (item) {
+                                    is SongItem -> item.thumbnail
+                                    is PlaylistItem -> item.thumbnail
+                                    is AlbumItem -> item.thumbnail
+                                    is ArtistItem -> item.thumbnail
                                     else -> null
                                 }
-                                if (mediaItem != null) items.add(mediaItem)
                             }
+
+                            val encodedTitle = java.net.URLEncoder.encode(title, "UTF-8")
+                            val folderExtras = android.os.Bundle().apply {
+                                putInt("android.media.browse.CONTENT_STYLE_BROWSABLE_HINT", 2)  // 2 = 그리드(큰 카드)
+                                putInt("android.media.browse.CONTENT_STYLE_SINGLE_ITEM_HINT", 2)
+                            }
+                            val folder = MediaItem.Builder()
+                                .setMediaId("${MusicService.RECOMMENDED}/HOME_SECTION/$encodedTitle")
+                                .setMediaMetadata(
+                                    MediaMetadata.Builder()
+                                        .setTitle(title)
+                                        .setArtworkUri(firstThumb?.toUri()?.let { AlbumArtContentProvider.mapUri(it) })
+                                        .setIsPlayable(false)
+                                        .setIsBrowsable(true)
+                                        .setMediaType(MediaMetadata.MEDIA_TYPE_FOLDER_MIXED)
+                                        .setExtras(folderExtras)
+                                        .build()
+                                ).build()
+                            items.add(folder)
                         }
 
-                        LogBuffer.log("HOME 섹션 ${allSections.size}개, 표시 아이템 ${items.size}개")
+                        LogBuffer.log("HOME 폴더 ${items.size}개 생성")
                         items
                     } catch (e: Exception) {
                         reportException(e)
@@ -959,6 +919,109 @@ constructor(
                             val songItems: List<MediaItem> = songs.map { it.toCarMediaItem(parentId) }
 
                             listOf(shuffleItem) + songItems
+                        }
+
+                        parentId.startsWith("${MusicService.RECOMMENDED}/HOME_SECTION/") -> {
+                            val encoded = parentId.removePrefix("${MusicService.RECOMMENDED}/HOME_SECTION/")
+                            val targetTitle = try { java.net.URLDecoder.decode(encoded, "UTF-8") } catch (e: Exception) { encoded }
+                            LogBuffer.log("HOME_SECTION 열기: '$targetTitle'")
+
+                            // 홈 탭에서 캐싱해둔 섹션 우선 사용 (재호출 없이 즉시 열림)
+                            var sections = lastHomeSections
+                            if (sections.isEmpty()) {
+                                LogBuffer.log("HOME_SECTION: 캐시 비어있음, home 재호출")
+                                val fetched = mutableListOf<com.metrolist.innertube.pages.HomePage.Section>()
+                                var cont: String? = null
+                                for (page in 0 until 4) {
+                                    val result = withTimeoutOrNull(10_000) {
+                                        YouTube.home(cont).getOrNull()
+                                    } ?: break
+                                    fetched.addAll(result.sections)
+                                    cont = result.continuation
+                                    if (cont == null) break
+                                }
+                                sections = fetched
+                                lastHomeSections = fetched
+                                // 재생용 곡 캐시도 같이 채운다 (이게 없으면 폴더 안 곡 재생이 안 됨)
+                                if (lastRecommendedSongs.isEmpty()) {
+                                    lastRecommendedSongs = fetched
+                                        .flatMap { it.items }
+                                        .filterIsInstance<SongItem>()
+                                        .filterExplicit(context.dataStore.get(HideExplicitKey, false))
+                                        .filterVideoSongs(context.dataStore.get(HideVideoSongsKey, false))
+                                        .distinctBy { it.id }
+                                }
+                            }
+
+                            val target = sections.firstOrNull { it.title == targetTitle }
+                            if (target == null) {
+                                LogBuffer.log("HOME_SECTION '$targetTitle' 못 찾음")
+                                emptyList()
+                            } else {
+                                val result = mutableListOf<MediaItem>()
+                                target.items.forEach { ytItem ->
+                                    val mi: MediaItem? = when (ytItem) {
+                                        is SongItem -> MediaItem.Builder()
+                                            .setMediaId("${MusicService.RECOMMENDED}/${ytItem.id}")
+                                            .setMediaMetadata(
+                                                MediaMetadata.Builder()
+                                                    .setTitle(ytItem.title)
+                                                    .setSubtitle(ytItem.artists.joinToString(", ") { it.name })
+                                                    .setArtist(ytItem.artists.joinToString(", ") { it.name })
+                                                    .setArtworkUri(ytItem.thumbnail?.toUri()?.let { AlbumArtContentProvider.mapUri(it) })
+                                                    .setIsPlayable(true)
+                                                    .setIsBrowsable(false)
+                                                    .setMediaType(MediaMetadata.MEDIA_TYPE_MUSIC)
+                                                    .build()
+                                            ).build()
+                                        is PlaylistItem ->
+                                            if (ytItem.id == "LM" || ytItem.id == "SE" || ytItem.id == "VLLM" || ytItem.id == "VLSE") null
+                                            else MediaItem.Builder()
+                                                .setMediaId("${MusicService.YOUTUBE_PLAYLIST}/${ytItem.id}")
+                                                .setMediaMetadata(
+                                                    MediaMetadata.Builder()
+                                                        .setTitle(ytItem.title)
+                                                        .setSubtitle(ytItem.author?.name)
+                                                        .setArtist(ytItem.author?.name)
+                                                        .setArtworkUri(ytItem.thumbnail?.toUri()?.let { AlbumArtContentProvider.mapUri(it) })
+                                                        .setIsPlayable(false)
+                                                        .setIsBrowsable(true)
+                                                        .setMediaType(MediaMetadata.MEDIA_TYPE_PLAYLIST)
+                                                        .build()
+                                                ).build()
+                                        is AlbumItem -> MediaItem.Builder()
+                                            .setMediaId("${MusicService.ALBUM}/${ytItem.browseId}")
+                                            .setMediaMetadata(
+                                                MediaMetadata.Builder()
+                                                    .setTitle(ytItem.title)
+                                                    .setSubtitle(ytItem.artists?.joinToString(", ") { it.name })
+                                                    .setArtist(ytItem.artists?.joinToString(", ") { it.name })
+                                                    .setArtworkUri(ytItem.thumbnail?.toUri()?.let { AlbumArtContentProvider.mapUri(it) })
+                                                    .setIsPlayable(false)
+                                                    .setIsBrowsable(true)
+                                                    .setMediaType(MediaMetadata.MEDIA_TYPE_ALBUM)
+                                                    .build()
+                                            ).build()
+                                        is ArtistItem -> MediaItem.Builder()
+                                            .setMediaId("${MusicService.ARTIST}/${ytItem.id}")
+                                            .setMediaMetadata(
+                                                MediaMetadata.Builder()
+                                                    .setTitle(ytItem.title)
+                                                    .setSubtitle("Artist")
+                                                    .setArtist("Artist")
+                                                    .setArtworkUri(ytItem.thumbnail?.toUri()?.let { AlbumArtContentProvider.mapUri(it) })
+                                                    .setIsPlayable(false)
+                                                    .setIsBrowsable(true)
+                                                    .setMediaType(MediaMetadata.MEDIA_TYPE_ARTIST)
+                                                    .build()
+                                            ).build()
+                                        else -> null
+                                    }
+                                    if (mi != null) result.add(mi)
+                                }
+                                LogBuffer.log("HOME_SECTION '$targetTitle' 아이템 ${result.size}개")
+                                result
+                            }
                         }
 
                         parentId.startsWith("${MusicService.RECOMMENDED}/") -> {
@@ -1331,10 +1394,30 @@ constructor(
 
                     if (playlistId == PlaylistEntity.LIKED_PLAYLIST_ID) {
                         return@future try {
-                            val ytSongs: List<SongItem> = YouTube.playlist("LM").completed().getOrNull()
+                            val rawSongs: List<SongItem> = YouTube.playlist("LM").completed().getOrNull()
                                 ?.songs
                                 ?: emptyList()
-                            LogBuffer.log("LIKED playback: ytSongs.size=${ytSongs.size}, songId=$songId, firstTitle=${ytSongs.firstOrNull()?.title}")
+
+                            // 화면 표시 목록과 동일한 필터를 재생 큐에도 적용해야
+                            // "목록엔 없는데 재생되는 곡"(차에서 해제한 곡)이 안 끼어든다.
+                            val unlikedIds = try {
+                                rawSongs.mapNotNull { songItem ->
+                                    val dbSong = try {
+                                        database.song(songItem.id).first()
+                                    } catch (e: Exception) {
+                                        null
+                                    }
+                                    if (dbSong != null && dbSong.song.liked == false) songItem.id else null
+                                }.toSet()
+                            } catch (e: Exception) {
+                                emptySet()
+                            }
+
+                            val ytSongs: List<SongItem> = rawSongs
+                                .distinctBy { it.id }
+                                .filterNot { it.id in unlikedIds }
+
+                            LogBuffer.log("LIKED playback: 원본=${rawSongs.size}, 필터후=${ytSongs.size}, songId=$songId, firstTitle=${ytSongs.firstOrNull()?.title}")
                             // 진단: 클릭한 곡이 로컬 DB에 있는지, liked 값이 뭔지 확인
                             try {
                                 val targetSongId = if (songId == MusicService.SHUFFLE_ACTION) {

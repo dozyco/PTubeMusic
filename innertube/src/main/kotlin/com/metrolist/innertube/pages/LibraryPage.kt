@@ -63,17 +63,24 @@ data class LibraryPage(
                     } != null
                 )
 
-                renderer.isArtist -> ArtistItem(
-                    id = renderer.navigationEndpoint.browseEndpoint?.browseId ?: return null,
-                    title = renderer.title.runs?.lastOrNull()?.text ?: return null,
-                    thumbnail = renderer.thumbnailRenderer.musicThumbnailRenderer?.getThumbnailUrl() ?: return null,
-                    shuffleEndpoint = renderer.menu?.menuRenderer?.items?.find {
+                renderer.isArtist -> {
+                    val _id = renderer.navigationEndpoint.browseEndpoint?.browseId
+                    val _title = renderer.title.runs?.lastOrNull()?.text
+                    val _thumb = renderer.thumbnailRenderer.musicThumbnailRenderer?.getThumbnailUrl()
+                    val _shuffle = renderer.menu?.menuRenderer?.items?.find {
                         it.menuNavigationItemRenderer?.icon?.iconType == "MUSIC_SHUFFLE"
-                    }?.menuNavigationItemRenderer?.navigationEndpoint?.watchPlaylistEndpoint ?: return null,
-                    radioEndpoint = renderer.menu.menuRenderer.items.find {
+                    }?.menuNavigationItemRenderer?.navigationEndpoint?.watchPlaylistEndpoint
+                    val _radio = renderer.menu?.menuRenderer?.items?.find {
                         it.menuNavigationItemRenderer?.icon?.iconType == "MIX"
-                    }?.menuNavigationItemRenderer?.navigationEndpoint?.watchPlaylistEndpoint ?: return null,
-                )
+                    }?.menuNavigationItemRenderer?.navigationEndpoint?.watchPlaylistEndpoint
+                    ArtistItem(
+                        id = _id ?: return null,
+                        title = _title ?: return null,
+                        thumbnail = _thumb ?: return null,
+                        shuffleEndpoint = _shuffle,
+                        radioEndpoint = _radio,
+                    )
+                }
 
                 // Podcast host channels use MUSIC_PAGE_TYPE_USER_CHANNEL (not ARTIST)
                 renderer.isUserChannel -> ArtistItem(
@@ -213,19 +220,22 @@ data class LibraryPage(
                     )
                 }
 
-                renderer.isArtist -> ArtistItem(
-                    id = renderer.navigationEndpoint?.browseEndpoint?.browseId ?: return null,
-                    title = renderer.flexColumns.firstOrNull()?.musicResponsiveListItemFlexColumnRenderer?.text?.runs?.firstOrNull()?.text
-                        ?: return null,
-                    thumbnail = renderer.thumbnail?.musicThumbnailRenderer?.getThumbnailUrl()
-                        ?: return null,
-                    shuffleEndpoint = renderer.menu?.menuRenderer?.items
-                        ?.find { it.menuNavigationItemRenderer?.icon?.iconType == "MUSIC_SHUFFLE" }
-                        ?.menuNavigationItemRenderer?.navigationEndpoint?.watchPlaylistEndpoint,
-                    radioEndpoint = renderer.menu?.menuRenderer?.items
-                        ?.find { it.menuNavigationItemRenderer?.icon?.iconType == "MIX" }
-                        ?.menuNavigationItemRenderer?.navigationEndpoint?.watchPlaylistEndpoint
-                )
+                renderer.isArtist -> {
+                    val _id = renderer.navigationEndpoint?.browseEndpoint?.browseId
+                    val _title = renderer.flexColumns.firstOrNull()?.musicResponsiveListItemFlexColumnRenderer?.text?.runs?.firstOrNull()?.text
+                    val _thumb = renderer.thumbnail?.musicThumbnailRenderer?.getThumbnailUrl()
+                    ArtistItem(
+                        id = _id ?: return null,
+                        title = _title ?: return null,
+                        thumbnail = _thumb ?: "",
+                        shuffleEndpoint = renderer.menu?.menuRenderer?.items
+                            ?.find { it.menuNavigationItemRenderer?.icon?.iconType == "MUSIC_SHUFFLE" }
+                            ?.menuNavigationItemRenderer?.navigationEndpoint?.watchPlaylistEndpoint,
+                        radioEndpoint = renderer.menu?.menuRenderer?.items
+                            ?.find { it.menuNavigationItemRenderer?.icon?.iconType == "MIX" }
+                            ?.menuNavigationItemRenderer?.navigationEndpoint?.watchPlaylistEndpoint
+                    )
+                }
 
                 // Podcast host channels use MUSIC_PAGE_TYPE_USER_CHANNEL (not ARTIST)
                 renderer.isUserChannel -> ArtistItem(
