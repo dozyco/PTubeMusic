@@ -1545,8 +1545,16 @@ constructor(
                 }
 
                 MusicService.SEARCH -> {
-                    val songId = path.getOrNull(2) ?: return@future defaultResult
-                    val searchQuery = path.getOrNull(1) ?: return@future defaultResult
+                    // mediaId = "search/검색어/곡id" 인데, 검색어에 '/'나 공백이 섞이면
+                    // split 결과가 밀려서 path[2]가 곡 id가 아니게 된다.
+                    // 곡 id는 항상 맨 마지막 조각이므로 last()로 가져온다.
+                    val songId = path.lastOrNull()?.takeIf { it.isNotBlank() } ?: return@future defaultResult
+                    // 검색어는 search/ 와 마지막 곡id 를 뺀 가운데 전부 (원래 '/'가 있었으면 복원)
+                    val searchQuery = if (path.size > 2) {
+                        path.subList(1, path.size - 1).joinToString("/")
+                    } else {
+                        path.getOrNull(1) ?: return@future defaultResult
+                    }
 
                     val cachedSongs = lastSearchSongs
                     if (cachedSongs.isNotEmpty()) {
