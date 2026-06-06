@@ -199,6 +199,19 @@ constructor(
         } else {
             LogBuffer.log("rootHints 없음 (params or extras null)")
         }
+        // 전역 콘텐츠 스타일 힌트.
+        // 폴스타4 등 일부 OEM 차량은 개별 MediaItem 의 CONTENT_STYLE_BROWSABLE_HINT 를 무시하고
+        // 이 root(전역) 설정만 본다. 그래서 여기에 그리드 힌트를 박아야 큰 카드로 표시된다.
+        val rootExtras = android.os.Bundle().apply {
+            putInt("android.media.browse.CONTENT_STYLE_BROWSABLE_HINT", 2)  // 2 = 그리드
+            putInt("android.media.browse.CONTENT_STYLE_PLAYABLE_HINT", 1)   // 1 = 리스트 (곡은 목록으로)
+        }
+        val mergedParams = MediaLibraryService.LibraryParams.Builder()
+            .setExtras(
+                (params?.extras ?: android.os.Bundle()).apply { putAll(rootExtras) }
+            )
+            .build()
+
         return Futures.immediateFuture(
             LibraryResult.ofItem(
                 MediaItem
@@ -212,7 +225,7 @@ constructor(
                             .setMediaType(MediaMetadata.MEDIA_TYPE_FOLDER_MIXED)
                             .build(),
                     ).build(),
-                params,
+                mergedParams,
             ),
         )
     }
