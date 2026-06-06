@@ -7,7 +7,6 @@ package com.metrolist.music.utils
 
 import android.net.ConnectivityManager
 import android.net.Uri
-import android.util.Log
 import androidx.media3.common.PlaybackException
 import com.metrolist.innertube.NewPipeExtractor
 import com.metrolist.innertube.YouTube
@@ -26,13 +25,14 @@ import com.metrolist.innertube.models.YouTubeClient.Companion.WEB_CREATOR
 import com.metrolist.innertube.models.YouTubeClient.Companion.WEB_REMIX
 import com.metrolist.innertube.models.response.PlayerResponse
 import com.metrolist.music.constants.AudioQuality
-import com.metrolist.music.utils.cipher.CipherDeobfuscator
 import com.metrolist.music.utils.YTPlayerUtils.MAIN_CLIENT
 import com.metrolist.music.utils.YTPlayerUtils.STREAM_FALLBACK_CLIENTS
 import com.metrolist.music.utils.YTPlayerUtils.validateStatus
+import com.metrolist.music.utils.cipher.CipherDeobfuscator
+import com.metrolist.music.utils.cipher.FunctionNameExtractor
+import com.metrolist.music.utils.cipher.PlayerJsFetcher
 import com.metrolist.music.utils.potoken.PoTokenGenerator
 import com.metrolist.music.utils.potoken.PoTokenResult
-import com.metrolist.music.utils.sabr.EjsNTransformSolver
 import okhttp3.OkHttpClient
 import timber.log.Timber
 
@@ -61,6 +61,7 @@ object YTPlayerUtils {
         WEB,
         WEB_CREATOR
     )
+
     data class PlaybackData(
         val audioConfig: PlayerResponse.PlayerConfig.AudioConfig?,
         val videoDetails: PlayerResponse.VideoDetails?,
@@ -147,7 +148,7 @@ object YTPlayerUtils {
 
         // If we still don't have a valid response, throw
 
-        val audioConfig = mainPlayerResponse.playerConfig?.audioConfig
+        var audioConfig = mainPlayerResponse.playerConfig?.audioConfig
         val videoDetails = mainPlayerResponse.videoDetails
         val playbackTracking = mainPlayerResponse.playbackTracking
         var format: PlayerResponse.StreamingData.Format? = null
@@ -172,6 +173,13 @@ object YTPlayerUtils {
             isAgeRestricted -> 0
             else -> -1
         }
+
+        var bestFallbackFormat: PlayerResponse.StreamingData.Format? = null
+        var bestFallbackUrl: String? = null
+        var bestFallbackExpiry: Int? = null
+        var bestFallbackResponse: PlayerResponse? = null
+
+        val hasHighQuality = mainPlayerResponse.streamingData?.adaptiveFormats?.any { it.audioQuality == "AUDIO_QUALITY_HIGH" } == true
 
         for (clientIndex in (startIndex until STREAM_FALLBACK_CLIENTS.size)) {
             // reset for each client
@@ -218,6 +226,16 @@ object YTPlayerUtils {
                     // Try to get streams using newPipePlayer method
                     val newPipeResponse = YouTube.newPipePlayer(videoId, streamPlayerResponse)
                     newPipeResponse ?: streamPlayerResponse
+                }
+
+                if (audioConfig == null) {
+                    audioConfig = responseToUse.playerConfig?.audioConfig
+
+                    if (audioConfig != null) {
+                        Timber.tag(logTag).d("AudioConfig obtained from response of client: ${if (clientIndex == -1) MAIN_CLIENT.clientName else STREAM_FALLBACK_CLIENTS[clientIndex].clientName}")
+                    } else {
+                        Timber.tag(logTag).d("No audioConfig found in responseToUse.")
+                    }
                 }
 
                 format =
@@ -309,6 +327,38 @@ object YTPlayerUtils {
 
                 Timber.tag(logTag).d("Stream expires in: $streamExpiresInSeconds seconds")
 
+                fun scoreFallbackQuality(quality: String?): Int = when (quality) {
+                    "AUDIO_QUALITY_HIGH" -> 3
+                    "AUDIO_QUALITY_MEDIUM" -> 2
+                    "AUDIO_QUALITY_LOW" -> 1
+                    else -> 0
+                }
+
+                fun scoreFallbackCodec(mimeType: String): Int = when {
+                    mimeType.contains("opus", ignoreCase = true) -> 2
+                    mimeType.contains("mp4a", ignoreCase = true) -> 1
+                    else -> 0
+                }
+
+                if (audioQuality == AudioQuality.HIGH && format.audioQuality != "AUDIO_QUALITY_HIGH" && hasHighQuality) {
+                    val isBetter = bestFallbackFormat == null ||
+                        compareValuesBy(
+                            format, bestFallbackFormat,
+                            { scoreFallbackQuality(it.audioQuality) },
+                            { it.audioChannels ?: 2 },
+                            { scoreFallbackCodec(it.mimeType) },
+                            { it.bitrate }
+                        ) > 0
+                    if (isBetter) {
+                        Timber.tag(logTag).d("Saving fallback format: ${format.mimeType}, bitrate: ${format.bitrate}")
+                        bestFallbackFormat = format
+                        bestFallbackUrl = streamUrl
+                        bestFallbackExpiry = streamExpiresInSeconds
+                        bestFallbackResponse = streamPlayerResponse
+                    }
+                    continue
+                }
+
                 if (clientIndex == STREAM_FALLBACK_CLIENTS.size - 1) {
                     /** skip [validateStatus] for last client */
                     Timber.tag(logTag).d("Using last fallback client without validation: ${STREAM_FALLBACK_CLIENTS[clientIndex].clientName}")
@@ -329,6 +379,14 @@ object YTPlayerUtils {
             } else {
                 Timber.tag(logTag).d("Player response status not OK: ${streamPlayerResponse?.playabilityStatus?.status}, reason: ${streamPlayerResponse?.playabilityStatus?.reason}")
             }
+        }
+
+        if (audioQuality == AudioQuality.HIGH && format?.audioQuality != "AUDIO_QUALITY_HIGH" && bestFallbackFormat != null) {
+            Timber.tag(logTag).d("Using best fallback format: ${bestFallbackFormat.mimeType}, bitrate: ${bestFallbackFormat.bitrate}")
+            format = bestFallbackFormat
+            streamUrl = bestFallbackUrl
+            streamExpiresInSeconds = bestFallbackExpiry
+            streamPlayerResponse = bestFallbackResponse
         }
 
         if (streamPlayerResponse == null) {
@@ -386,17 +444,26 @@ object YTPlayerUtils {
         e.printStackTrace()
     }
     /**
-     * Simple player response intended to use for metadata only.
+     * Player response intended for metadata / playback-tracking retrieval.
      * Stream URLs of this response might not work so don't use them.
      */
     suspend fun playerResponseForMetadata(
         videoId: String,
         playlistId: String? = null,
     ): Result<PlayerResponse> {
-        Timber.tag(logTag).d("Fetching metadata-only player response for videoId: $videoId using MAIN_CLIENT: ${MAIN_CLIENT.clientName}")
-        return YouTube.player(videoId, playlistId, client = WEB_REMIX) // ANDROID_VR does not work with history
-            .onSuccess { Timber.tag(logTag).d("Successfully fetched metadata") }
-            .onFailure { Timber.tag(logTag).e(it, "Failed to fetch metadata") }
+        Timber.tag(logTag).d("Fetching metadata player response for videoId: $videoId using MAIN_CLIENT: ${MAIN_CLIENT.clientName}")
+        val signatureTimestamp = getSignatureTimestampOrNull(videoId)
+        val isLoggedIn = YouTube.cookie != null
+        val sessionId = if (isLoggedIn) YouTube.dataSyncId else YouTube.visitorData
+        var poToken: PoTokenResult? = null
+        if (MAIN_CLIENT.useWebPoTokens && sessionId != null) {
+            try {
+                poToken = poTokenGenerator.getWebClientPoToken(videoId, sessionId)
+            } catch (_: Exception) { }
+        }
+        return YouTube.player(videoId, playlistId, WEB_REMIX, signatureTimestamp.timestamp, poToken?.playerRequestPoToken)
+            .onSuccess { Timber.tag(logTag).d("Successfully fetched metadata player response") }
+            .onFailure { Timber.tag(logTag).e(it, "Failed to fetch metadata player response") }
     }
 
     private fun findFormat(
@@ -413,44 +480,66 @@ object YTPlayerUtils {
 
         val maxBitrate = audioCapableFormats.maxOfOrNull { it.bitrate } ?: return null
 
-        val targetBitrate = when (audioQuality) {
-            AudioQuality.VERY_HIGH -> maxBitrate.toDouble()
-            AudioQuality.HIGH -> minOf(maxBitrate.toDouble(), 256000.0)
-            AudioQuality.LOW -> minOf(maxBitrate.toDouble(), 128000.0)
-            AudioQuality.AUTO -> {
-                if (connectivityManager.isActiveNetworkMetered) {
-                    minOf(maxBitrate.toDouble(), 128000.0)
-                } else {
-                    maxBitrate.toDouble()
-                }
-            }
+        fun scoreCodec(mimeType: String): Int = when {
+            mimeType.contains("opus", ignoreCase = true) -> 2
+            mimeType.contains("mp4a", ignoreCase = true) -> 1
+            else -> 0
         }
-
-        Timber.tag(logTag).d("Finding format: maxBitrate=$maxBitrate, targetBitrate=$targetBitrate")
 
         val format = when (audioQuality) {
             AudioQuality.VERY_HIGH -> {
-                val opus338 = audioCapableFormats.find { it.itag == 338 }
-                if (opus338 != null) {
-                    Timber.tag(logTag).d("Selected Opus itag 338: bitrate=${opus338.bitrate}")
-                    return opus338
-                }
-
-                val opus141 = audioCapableFormats.find { it.itag == 141 }
-                if (opus141 != null) {
-                    Timber.tag(logTag).d("Selected AAC itag 141: bitrate=${opus141.bitrate}")
-                    return opus141
-                }
-
-                audioCapableFormats
-                    .filter { it.isOriginal }
-                    .maxByOrNull { it.bitrate }
-                    ?: audioCapableFormats.maxByOrNull { it.bitrate }
+                audioCapableFormats.maxWithOrNull(
+                    compareBy<PlayerResponse.StreamingData.Format> { it.bitrate }
+                        .thenBy { format ->
+                            when (format.audioQuality) {
+                                "AUDIO_QUALITY_HIGH" -> 3
+                                "AUDIO_QUALITY_MEDIUM" -> 2
+                                "AUDIO_QUALITY_LOW" -> 1
+                                else -> 0
+                            }
+                        }
+                        .thenBy { it.audioChannels ?: 2 }
+                        .thenBy { scoreCodec(it.mimeType) }
+                )
             }
 
-            else -> {
+            AudioQuality.HIGH -> {
+                audioCapableFormats.maxWithOrNull(
+                    compareBy<PlayerResponse.StreamingData.Format> { format ->
+                        when (format.audioQuality) {
+                            "AUDIO_QUALITY_HIGH" -> 3
+                            "AUDIO_QUALITY_MEDIUM" -> 2
+                            "AUDIO_QUALITY_LOW" -> 1
+                            else -> 0
+                        }
+                    }.thenBy { it.audioChannels ?: 2 }
+                        .thenBy { scoreCodec(it.mimeType) }
+                        .thenBy { it.bitrate }
+                )
+            }
+
+            AudioQuality.LOW -> {
+                val cappedFormats = audioCapableFormats.filter { it.bitrate <= 128000 }
+                val lowFormat = cappedFormats
+                    .filter { it.isOriginal }
+                    .maxByOrNull { it.bitrate }
+                    ?: cappedFormats.maxByOrNull { it.bitrate }
+                    ?: audioCapableFormats
+                        .filter { it.isOriginal }
+                        .minByOrNull { kotlin.math.abs(it.bitrate.toDouble() - 128000.0) }
+                    ?: audioCapableFormats.maxByOrNull { it.bitrate }
+
+                if (lowFormat != null) {
+                    Timber.tag(logTag).d("Selected LOW format: itag=${lowFormat.itag}, bitrate: ${lowFormat.bitrate}")
+                }
+
+                lowFormat
+            }
+
+            AudioQuality.AUTO -> {
+                val targetBitrate = if (connectivityManager.isActiveNetworkMetered) 128000.0 else maxBitrate.toDouble()
                 val cappedFormats = audioCapableFormats.filter { it.bitrate <= targetBitrate }
-                val format = cappedFormats
+                val autoFormat = cappedFormats
                     .filter { it.isOriginal }
                     .maxByOrNull { it.bitrate }
                     ?: cappedFormats.maxByOrNull { it.bitrate }
@@ -459,19 +548,17 @@ object YTPlayerUtils {
                         .minByOrNull { kotlin.math.abs(it.bitrate - targetBitrate) }
                     ?: audioCapableFormats.maxByOrNull { it.bitrate }
 
-                if (format != null) {
-                    Timber.tag(logTag).d("Selected format: ${format.mimeType}, bitrate: ${format.bitrate}")
-                } else {
-                    Timber.tag(logTag).d("No suitable audio format found")
+                if (autoFormat != null) {
+                    Timber.tag(logTag).d("Selected AUTO format: itag=${autoFormat.itag}, bitrate: ${autoFormat.bitrate}")
                 }
 
-                format
+                autoFormat
             }
         }
 
-        if (format != null && audioQuality == AudioQuality.VERY_HIGH) {
-            Timber.tag(logTag).d("Selected format: ${format.mimeType}, bitrate: ${format.bitrate}")
-        } else if (format == null) {
+        if (format != null) {
+            Timber.tag(logTag).d("Selected format: itag=${format.itag}, mimeType=${format.mimeType}, bitrate=${format.bitrate}, audioQuality label: ${format.audioQuality}")
+        } else {
             Timber.tag(logTag).d("No suitable audio format found")
         }
 
@@ -510,12 +597,12 @@ object YTPlayerUtils {
         val isAgeRestricted: Boolean
     )
 
-    private fun getSignatureTimestampOrNull(videoId: String): SignatureTimestampResult {
+    private suspend fun getSignatureTimestampOrNull(videoId: String): SignatureTimestampResult {
         Timber.tag(logTag).d("Getting signature timestamp for videoId: $videoId")
         val result = NewPipeExtractor.getSignatureTimestamp(videoId)
         return result.fold(
             onSuccess = { timestamp ->
-                Timber.tag(logTag).d("Signature timestamp obtained: $timestamp")
+                Timber.tag(logTag).d("Signature timestamp obtained via NewPipe: $timestamp")
                 SignatureTimestampResult(timestamp, isAgeRestricted = false)
             },
             onFailure = { error ->
@@ -525,10 +612,25 @@ object YTPlayerUtils {
                     Timber.tag(logTag).d("Age-restricted content detected from NewPipe")
                     Timber.tag(TAG).i("Age-restricted detected early via NewPipe: videoId=$videoId")
                 } else {
-                    Timber.tag(logTag).e(error, "Failed to get signature timestamp")
+                    Timber.tag(logTag).e(error, "Failed to get signature timestamp via NewPipe")
                     reportException(error)
                 }
-                SignatureTimestampResult(null, isAgeRestricted)
+                // Fallback: extract signatureTimestamp directly from player.js when NewPipe fails.
+                // This keeps playback working when the NewPipe extractor is outdated for a new
+                // player version, as long as the player.js still embeds signatureTimestamp inline.
+                val fallbackSts = runCatching {
+                    Timber.tag(logTag).d("Trying player.js fallback for signature timestamp")
+                    val (playerJs, hash) = PlayerJsFetcher.getPlayerJs()
+                        ?: error("PlayerJsFetcher returned null")
+                    Timber.tag(logTag).d("Got player.js (hash=$hash), extracting signatureTimestamp")
+                    FunctionNameExtractor.extractSignatureTimestamp(playerJs)
+                        ?: error("extractSignatureTimestamp returned null for hash=$hash")
+                }.onSuccess { sts ->
+                    Timber.tag(logTag).d("Signature timestamp obtained via player.js fallback: $sts")
+                }.onFailure { e ->
+                    Timber.tag(logTag).e(e, "player.js fallback for signature timestamp also failed")
+                }.getOrNull()
+                SignatureTimestampResult(fallbackSts, isAgeRestricted)
             }
         )
     }

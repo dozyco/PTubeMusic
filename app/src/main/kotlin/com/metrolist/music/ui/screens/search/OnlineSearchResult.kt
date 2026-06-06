@@ -64,7 +64,7 @@ import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.SavedStateHandle
-import androidx.navigation.NavController
+import com.metrolist.music.LocalNavController
 import com.metrolist.innertube.YouTube.SearchFilter.Companion.FILTER_ALBUM
 import com.metrolist.innertube.YouTube.SearchFilter.Companion.FILTER_ARTIST
 import com.metrolist.innertube.YouTube.SearchFilter.Companion.FILTER_COMMUNITY_PLAYLIST
@@ -85,13 +85,16 @@ import com.metrolist.innertube.models.YTItem
 import com.metrolist.music.LocalDatabase
 import com.metrolist.music.LocalPlayerConnection
 import com.metrolist.music.R
+import com.metrolist.music.constants.AutoRadioQueueKey
 import com.metrolist.music.constants.HideVideoSongsKey
 import com.metrolist.music.constants.MiniPlayerBottomSpacing
 import com.metrolist.music.constants.MiniPlayerHeight
 import com.metrolist.music.constants.NavigationBarHeight
 import com.metrolist.music.constants.PauseSearchHistoryKey
 import com.metrolist.music.db.entities.SearchHistory
+import com.metrolist.music.extensions.toMediaItem
 import com.metrolist.music.models.toMediaMetadata
+import com.metrolist.music.playback.queues.ListQueue
 import com.metrolist.music.playback.queues.YouTubeQueue
 import com.metrolist.music.ui.component.ChipsRow
 import com.metrolist.music.ui.component.EmptyPlaceholder
@@ -115,11 +118,11 @@ import java.net.URLEncoder
 @OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
 @Composable
 fun OnlineSearchResult(
-    navController: NavController,
     viewModel: OnlineSearchViewModel = hiltViewModel(),
     pureBlack: Boolean = false,
     savedStateHandle: SavedStateHandle? = null
 ) {
+    val navController = LocalNavController.current
     val database = LocalDatabase.current
     val menuState = LocalMenuState.current
     val playerConnection = LocalPlayerConnection.current ?: return
@@ -156,6 +159,7 @@ fun OnlineSearchResult(
 
     val pauseSearchHistory by rememberPreference(PauseSearchHistoryKey, defaultValue = false)
     val hideVideoSongs by rememberPreference(HideVideoSongsKey, defaultValue = false)
+    val autoRadioQueue by rememberPreference(AutoRadioQueueKey, defaultValue = true)
 
     BackHandler(enabled = isSearchFocused) {
         isSearchFocused = false
@@ -240,7 +244,6 @@ fun OnlineSearchResult(
                     is SongItem -> {
                         YouTubeSongMenu(
                             song = item,
-                            navController = navController,
                             onDismiss = menuState::dismiss,
                         )
                     }
@@ -248,7 +251,6 @@ fun OnlineSearchResult(
                     is AlbumItem -> {
                         YouTubeAlbumMenu(
                             albumItem = item,
-                            navController = navController,
                             onDismiss = menuState::dismiss,
                         )
                     }
@@ -279,7 +281,6 @@ fun OnlineSearchResult(
                     is EpisodeItem -> {
                         YouTubeSongMenu(
                             song = item.asSongItem(),
-                            navController = navController,
                             onDismiss = menuState::dismiss,
                         )
                     }
@@ -316,10 +317,17 @@ fun OnlineSearchResult(
                                         playerConnection.togglePlayPause()
                                     } else {
                                         playerConnection.playQueue(
-                                            YouTubeQueue(
-                                                WatchEndpoint(videoId = item.id),
-                                                item.toMediaMetadata(),
-                                            ),
+                                            if (autoRadioQueue) {
+                                                YouTubeQueue(
+                                                    WatchEndpoint(videoId = item.id),
+                                                    item.toMediaMetadata(),
+                                                )
+                                            } else {
+                                                ListQueue(
+                                                    title = item.title,
+                                                    items = listOf(item.toMediaItem())
+                                                )
+                                            }
                                         )
                                     }
                                 }
@@ -557,7 +565,6 @@ fun OnlineSearchResult(
                 OnlineSearchScreen(
                     query = query.text,
                     onQueryChange = { query = it },
-                    navController = navController,
                     onSearch = onSearch,
                     onDismiss = {
                         isSearchFocused = false

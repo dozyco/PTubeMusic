@@ -27,6 +27,8 @@
     <string name="sync_playlist">Sync playlist</string>
     <string name="sync_disabled">Sync disabled</string>
     <string name="allows_for_sync_witch_youtube">NOTE: This option enables syncing with YouTube Music and CANNOT be changed later</string>
+
+    <string name="and">and</string>
     <string name="generating_image">Generating image…</string>
     <string name="please_wait">Please wait</string>
     <string name="cancel">Cancel</string>
@@ -195,9 +197,10 @@
     <string name="proxy_username">Proxy username</string>
     <string name="proxy_password">Proxy password</string>
     <string name="enable_authentication">Enable authentication</string>
-    <string name="discord_use_details">Use details instead of state</string>
-    <string name="discord_use_details_description">Show the song title prominently instead of the artist name</string>
 
+
+    <string name="auto_radio_queue">Auto radio queue</string>
+    <string name="auto_radio_queue_desc">Automatically create a radio queue when playing a song from search or home</string>
     <string name="enable_similar_content">Enable similar content</string>
     <string name="similar_content_desc">Automatically adds more similar songs when the end of the queue is reached</string>
     <string name="persistent_shuffle_title">Persistent shuffle</string>
@@ -262,6 +265,7 @@
     <string name="description">Description</string>
     <string name="views">Views</string>
     <string name="likes">Likes</string>
+
     <string name="dislikes">Dislikes</string>
     <string name="subscribe">Subscribe</string>
     <string name="subscribed">Subscribed</string>
@@ -392,6 +396,10 @@
     <string name="speed">Playback Speed</string>
     <string name="varispeed">Enable varispeed</string>
     <string name="varispeed_description">Link pitch to playback speed, resulting in tape-style speedup and slowdown effects</string>
+
+    <!-- AudioTrack Playback Parameters -->
+    <string name="audio_track_playback_params">Use hardware audio processing</string>
+    <string name="audio_track_playback_params_description">Use Android\'s AudioTrack for speed/pitch changes instead of software processing. More reliable for extreme pitch values</string>
 
     <!-- Google Cast -->
     <string name="google_cast">Google Cast</string>
@@ -794,32 +802,38 @@
     <string name="recently_converted">Recently converted</string>
     <string name="column_label">Column %d</string>
 
-    <!-- Discord Integration -->
-    <string name="discord_status">Status</string>
-    <string name="discord_status_online">Online</string>
-    <string name="discord_status_idle">Idle</string>
-    <string name="discord_status_dnd">Do Not Disturb</string>
-    <string name="discord_buttons">Buttons</string>
-    <string name="discord_button_1">Button 1</string>
-    <string name="discord_button_2">Button 2</string>
-    <string name="login_successful">Login successful!</string>
-    <string name="discord_information_warning">This feature uses the KizzyRPC library to connect to Discord\'s Gateway and update your Rich Presence status. While no account suspensions from similar usage have been reported, this method is not officially supported by Discord and may be considered a Terms of Service violation. Your token is handled locally and never sent to third-party servers. Proceed at your own discretion!</string>
+    <string name="discord_connect_description">Sign in with Discord to share what you\'re listening to</string>
+    <string name="discord_gms_only">Discord Rich Presence is only available in the GMS build. Download the GMS variant to use this feature.</string>
+    <string name="discord_information_warning">Metrolist uses Discord\'s official OAuth2 SDK to share what you\'re listening to. All data goes directly from your device to Discord — no third-party servers involved. Your token stays on your device and is never shared. Discord\'s SDK bundles permissions together, so you\'ll see requests like friends list and profile access — this is normal and does not give Metrolist access to manage your friends or edit your profile.</string>
+    <string name="discord_rpc_preview">Rich Presence preview</string>
+    <string name="discord_integration">Discord Integration</string>
+    <string name="enable_discord_rpc">Enable Rich Presence</string>
+    <string name="discord_advanced_mode">Advanced mode</string>
+    <string name="discord_advanced_mode_description">Customize every field of your Rich Presence with placeholders</string>
+    <string name="discord_presence">Presence</string>
     <string name="discord_activity_type">Activity type</string>
     <string name="discord_activity_playing">Playing</string>
     <string name="discord_activity_listening">Listening</string>
     <string name="discord_activity_watching">Watching</string>
     <string name="discord_activity_competing">Competing</string>
-    <string name="discord_button_text_variables">Variables: {song_name}, {artist_name}, {album_name}</string>
-    <string name="discord_rpc_preview">Rich Presence preview</string>
-    <string name="discord_presence">Presence</string>
-    <string name="discord_connect_description">Sign in with Discord to share what you\'re listening to</string>
-    <string name="discord_playing_metrolist">Playing Metrolist</string>
-    <string name="discord_watching_metrolist">Watching Metrolist</string>
-    <string name="discord_competing_metrolist">Competing in Metrolist</string>
     <string name="discord_activity_name">Activity name</string>
-    <string name="discord_activity_name_description">Custom name for the activity. Leave empty to use the default</string>
-    <string name="discord_advanced_mode">Advanced mode</string>
-    <string name="discord_advanced_mode_description">Show additional Rich Presence customization options</string>
+    <string name="discord_state">State</string>
+    <string name="discord_details">Details</string>
+    <string name="discord_buttons">Buttons</string>
+    <string name="discord_button_1">Button 1</string>
+    <string name="discord_button_2">Button 2</string>
+    <string name="discord_enable_button_1">Show button 1</string>
+    <string name="discord_enable_button_2">Show button 2</string>
+    <string name="discord_button_label">Label</string>
+    <string name="discord_button_url">URL</string>
+    <string name="discord_status">Status</string>
+    <string name="discord_status_online">Online</string>
+    <string name="discord_status_idle">Idle</string>
+    <string name="discord_status_dnd">Do Not Disturb</string>
+    <string name="discord_placeholders">Available placeholders</string>
+    <string name="discord_placeholder_song">Song name</string>
+    <string name="discord_placeholder_artist">Artist name</string>
+    <string name="discord_placeholder_album">Album name</string>
     <string name="speed_dial">Speed dial</string>
     <string name="pin_to_speed_dial">Pin to speed dial</string>
     <string name="unpin_from_speed_dial">Unpin from speed dial</string>
@@ -896,6 +910,7 @@
     <string name="restore_confirm_message">This will restore your app data from the selected backup</string>
     <string name="restore_account_warning">You will need to log in again after restoring. The following account will be signed out:</string>
     <string name="restore">Restore</string>
+    <string name="restore_database_incompatible">Cannot restore backup: database version incompatible. Your current data has been preserved.</string>
     <string name="checking_previous_account">Checking for previous account…</string>
     <string name="no_account_found">No account found</string>
 
@@ -940,7 +955,6 @@
     <string name="song_dropdown_more_results">Keep typing to narrow results (%d more)</string>
 
     <!-- Player and Audio Settings -->
-    <string name="audio_quality_very_high">Highest possible</string>
     <string name="autoplay">Autoplay</string>
     <string name="autoplay_desc">Automatically play the next song when the current one ends</string>
 
@@ -958,4 +972,7 @@
     <string name="loudness_level_loud">Loud (-11 dB)</string>
     <string name="loudness_level_balanced">Balanced (-14 dB)</string>
     <string name="loudness_level_quiet">Quiet (-19 dB)</string>
+    <string name="widget_playlists">Playlists</string>
+    <string name="widget_playlists_description">Playlist shortcuts with mini-player controls</string>
+    <string name="choose_something_below">Choose something below</string>
 </resources>

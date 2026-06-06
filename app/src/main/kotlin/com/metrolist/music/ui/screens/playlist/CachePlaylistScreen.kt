@@ -278,7 +278,6 @@ fun CachePlaylistScreen(
                                     menuState.show {
                                         SongMenu(
                                             originalSong = song,
-                                            navController = navController,
                                             onDismiss = menuState::dismiss,
                                             isFromCache = true,
                                         )
@@ -507,7 +506,7 @@ private fun CachePlaylistHeader(
         // Playlist Name
         Text(
             text = stringResource(R.string.cached_playlist),
-            style = MaterialTheme.typography.headlineSmall,
+            style = MaterialTheme.typography.headlineMedium,
             fontWeight = FontWeight.Bold,
             textAlign = androidx.compose.ui.text.style.TextAlign.Center,
             maxLines = 2,

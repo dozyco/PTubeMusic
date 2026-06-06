@@ -51,6 +51,8 @@ import com.metrolist.music.ui.screens.settings.AndroidAutoSection
 import com.metrolist.music.ui.screens.settings.serializeSections
 import com.metrolist.music.utils.dataStore
 import com.metrolist.music.utils.get
+import com.metrolist.music.utils.getArtistSeparator
+import com.metrolist.music.utils.joinToArtistString
 import com.metrolist.music.utils.reportException
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
@@ -1092,9 +1094,14 @@ constructor(
         mediaId: String,
     ): ListenableFuture<LibraryResult<MediaItem>> =
         scope.future(Dispatchers.IO) {
-            database.song(mediaId).first()?.toMediaItem()?.let {
-                LibraryResult.ofItem(it, null)
-            } ?: LibraryResult.ofError(SessionError.ERROR_UNKNOWN)
+            try {
+                database.song(mediaId).first()?.toMediaItem()?.let {
+                    LibraryResult.ofItem(it, null)
+                } ?: LibraryResult.ofError(SessionError.ERROR_UNKNOWN)
+            } catch (e: Exception) {
+                reportException(e)
+                LibraryResult.ofError(SessionError.ERROR_UNKNOWN)
+            }
         }
 
     override fun onSearch(
