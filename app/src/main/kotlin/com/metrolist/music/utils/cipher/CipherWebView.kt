@@ -385,6 +385,61 @@ function discoverAndInit() {
     }
 
     CipherBridge.logDebug("Discovery complete:");
+    // ============================================================
+    // [정찰] SIG 함수 후보 탐색 - window에서 서명처럼 동작하는 함수 찾기
+    // ============================================================
+    try {
+        // 실제 YouTube 서명 길이의 테스트 문자열 (108자 영숫자+특수)
+        var sigTest = "AAOAOq0QJ8wRAIgXmPlOPSBkkUs1bYFYlJCfe29xx8j7vgpDL0QwbdV06sCIEzpWqMGkFR20CFOS21Tp7vjEMum37KtXJoOy1ABCDEFGHIJ";
+        var sigKeys = Object.getOwnPropertyNames(window);
+        var sigCandidates = [];
+        var sigTested = 0;
+
+        for (var si = 0; si < sigKeys.length; si++) {
+            try {
+                var sk = sigKeys[si];
+                if (sk.startsWith("webkit") || sk.startsWith("on") ||
+                    sk === "CipherBridge" || sk === "_cipherSigFunc" ||
+                    sk === "_nTransformFunc" || sk === "window" || sk === "self") {
+                    continue;
+                }
+                var sfn = window[sk];
+                if (typeof sfn !== 'function') continue;
+                // sig 함수는 보통 1개 인자(문자열)를 받음
+                if (sfn.length !== 1) continue;
+
+                sigTested++;
+                var sres = sfn(sigTest);
+                // sig 결과: 입력과 다르고, 비슷한 길이(±10), 영숫자/특수
+                if (typeof sres === 'string' && sres !== sigTest &&
+                    Math.abs(sres.length - sigTest.length) <= 15 &&
+                    sres.length >= 80) {
+                    sigCandidates.push({
+                        name: sk,
+                        resultPreview: sres.substring(0, 20),
+                        inLen: sigTest.length,
+                        outLen: sres.length
+                    });
+                }
+            } catch(e) {
+                // 많은 window 함수가 호출 시 예외 - 정상
+            }
+        }
+
+        CipherBridge.logDebug("=== SIG 정찰 결과 ===");
+        CipherBridge.logDebug("  테스트한 1-인자 함수: " + sigTested);
+        CipherBridge.logDebug("  SIG 후보 수: " + sigCandidates.length);
+        if (sigCandidates.length > 0) {
+            CipherBridge.logDebug("  후보들: " + JSON.stringify(sigCandidates.slice(0, 10)));
+        } else {
+            CipherBridge.logDebug("  SIG 후보 없음 - window에 직접 노출 안 됨 (헬퍼객체 내부일 가능성)");
+        }
+    } catch(e) {
+        CipherBridge.logDebug("SIG 정찰 실패: " + e);
+    }
+    // ============================================================
+    // [정찰 끝]
+    // ============================================================
     CipherBridge.logDebug("  sigFuncName=" + sigFuncName);
     CipherBridge.logDebug("  nFuncName=" + nFuncName);
     CipherBridge.logDebug("  info=" + info);

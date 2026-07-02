@@ -101,9 +101,19 @@ private class NewPipeDownloaderImpl(
     }
 }
 
+// NewPipe requires a Downloader before any extractor call; both NewPipeUtils and
+// NewPipeExtractor must go through this or the first call NPEs with a null Downloader.
+private object NewPipeInitializer {
+    fun ensureInit() {
+        if (NewPipe.getDownloader() == null) {
+            NewPipe.init(NewPipeDownloaderImpl(YouTube.proxy, YouTube.proxyAuth))
+        }
+    }
+}
+
 object NewPipeUtils {
     init {
-        NewPipe.init(NewPipeDownloaderImpl(YouTube.proxy, YouTube.proxyAuth))
+        NewPipeInitializer.ensureInit()
     }
 
     fun getSignatureTimestamp(videoId: String): Result<Int> = runCatching {
@@ -140,6 +150,10 @@ object NewPipeUtils {
 }
 
 object NewPipeExtractor {
+    init {
+        NewPipeInitializer.ensureInit()
+    }
+
     fun newPipePlayer(videoId: String): List<Pair<Int, String>> {
         return try {
             val streamInfo =
@@ -158,6 +172,18 @@ object NewPipeExtractor {
 
     fun getSignatureTimestamp(videoId: String): Result<Int> = runCatching {
         YoutubeJavaScriptPlayerManager.getSignatureTimestamp(videoId)
+    }
+
+    /**
+     * Applies the throttling (n-parameter) deobfuscation to a stream URL using
+     * the NewPipe extractor's player.js interpreter. Returns null on failure.
+     */
+    fun getUrlWithNTransformed(videoId: String, url: String): String? {
+        return try {
+            YoutubeJavaScriptPlayerManager.getUrlWithThrottlingParameterDeobfuscated(videoId, url)
+        } catch (e: Exception) {
+            null
+        }
     }
 
     fun getStreamUrl(format: PlayerResponse.StreamingData.Format, videoId: String): String? {

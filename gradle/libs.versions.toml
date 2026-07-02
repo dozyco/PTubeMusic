@@ -37,6 +37,7 @@ kuromojiIpadic = "0.9.0"
 # newpipeextractor = "v0.26.0"
 extractor = "f0a00f5"
 tinypinyin = "2.0.3"
+youtubedlAndroid = "0.18.1"
 protobuf = "4.34.1"
 
 [libraries]
@@ -121,6 +122,9 @@ tinypinyin = { module = "com.github.promeG:tinypinyin", version.ref = "tinypinyi
 
 protobuf-javalite = { module = "com.google.protobuf:protobuf-javalite", version.ref = "protobuf" }
 protobuf-kotlin-lite = { module = "com.google.protobuf:protobuf-kotlin-lite", version.ref = "protobuf" }
+
+youtubedl-android = { module = "io.github.junkfood02.youtubedl-android:library", version.ref = "youtubedlAndroid" }
+youtubedl-ffmpeg = { module = "io.github.junkfood02.youtubedl-android:ffmpeg", version.ref = "youtubedlAndroid" }
 
 [plugins]
 compose-compiler = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }

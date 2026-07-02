@@ -30,6 +30,10 @@ val debugKeyPassword = System.getenv("METROLIST_DEBUG_KEY_PASSWORD")?.takeIf { i
 val persistentDebugKeystoreFile = file("persistent-debug.keystore")
 val workflowDebugKeystoreFile = debugKeystorePathOverride?.let(::file)
 
+// 배포용 arm64 전용 빌드 스위치. 개발 빌드는 유니버설 유지.
+// 사용법: gradlew :app:assembleGmsDebug -Parm64Only=true
+val arm64Only = (findProperty("arm64Only") as? String) == "true"
+
 plugins {
     id("com.android.application")
     alias(libs.plugins.hilt)
@@ -104,6 +108,10 @@ android {
         vectorDrawables.useSupportLibrary = true
 
         ndk {
+            // -Parm64Only=true 일 때만 arm64 전용으로 패키징 (폴스타4 배포용, 용량 절감)
+            if (arm64Only) {
+                abiFilters += "arm64-v8a"
+            }
         }
 
         // LastFM API keys from GitHub Secrets
@@ -112,7 +120,7 @@ android {
 
         buildConfigField("String", "LASTFM_API_KEY", "\"$lastFmKey\"")
         buildConfigField("String", "LASTFM_SECRET", "\"$lastFmSecret\"")
-        buildConfigField("String", "ARCHITECTURE", "\"universal\"")
+        buildConfigField("String", "ARCHITECTURE", if (arm64Only) "\"arm64-v8a\"" else "\"universal\"")
         manifestPlaceholders["discordAppId"] = ""
     }
 
@@ -253,7 +261,7 @@ android {
 
     packaging {
         jniLibs {
-            useLegacyPackaging = false
+            useLegacyPackaging = true
             keepDebugSymbols +=
                 listOf(
                     "**/libandroidx.graphics.path.so",
@@ -443,4 +451,11 @@ dependencies {
     coreLibraryDesugaring(libs.desugaring)
 
     implementation(libs.timber)
+
+    // yt-dlp 고음질 추출 (HIGH/VERY_HIGH itag 774)
+    implementation(libs.youtubedl.android)
+    implementation(libs.youtubedl.ffmpeg)
+
+    // HLahwani yt-dlp-android (QuickJS 기반 고속 추출기 - Python 불필요)
+    implementation(files("libs/yt-dlp-android-1.0.0.aar"))
 }

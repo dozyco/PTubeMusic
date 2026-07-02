@@ -275,8 +275,8 @@ private fun SettingsScreen(
     }
 
     val currentAudioQuality = remember {
-        context.dataStore.get(AudioQualityKey, AudioQuality.AUTO.name)
-            .toEnum(AudioQuality.AUTO)
+        context.dataStore.get(AudioQualityKey, AudioQuality.VERY_HIGH.name)
+            .toEnum(AudioQuality.VERY_HIGH)
     }
 
     var cookieInput by remember { mutableStateOf("") }
@@ -606,9 +606,7 @@ private fun SettingsScreen(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // 음질 설정 카드
-            var audioQualityExpanded by remember { mutableStateOf(false) }
-
+            // 음질 설정 카드 (v13.5.0 병합 때 유실됐던 UI 복원)
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(
@@ -629,77 +627,53 @@ private fun SettingsScreen(
                     Spacer(modifier = Modifier.height(4.dp))
 
                     Text(
-                        text = "현재: ${audioQualityLabel(currentAudioQuality)}",
+                        text = "현재: ${audioQualityLabel(currentAudioQuality)} · 기본값은 매우 높음(프리미엄 256kbps+)",
                         fontSize = 13.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
 
                     Spacer(modifier = Modifier.height(16.dp))
 
-                    // 현재 선택값 버튼. 누르면 아래로 선택지가 펼쳐짐.
-                    Button(
-                        onClick = { audioQualityExpanded = !audioQualityExpanded },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(52.dp),
-                        shape = RoundedCornerShape(12.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.primary,
-                            contentColor = MaterialTheme.colorScheme.onPrimary
-                        )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Text(
-                            text = audioQualityLabel(currentAudioQuality) + if (audioQualityExpanded) "  ▲" else "  ▼",
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-
-                    // 펼쳐졌을 때만 나머지 선택지 표시
-                    if (audioQualityExpanded) {
-                        Spacer(modifier = Modifier.height(8.dp))
-
-                        val qualities = listOf(
-                            AudioQuality.AUTO,
-                            AudioQuality.LOW,
-                            AudioQuality.HIGH,
-                            AudioQuality.VERY_HIGH,
-                        )
-
-                        qualities.forEach { quality ->
+                        AudioQuality.entries.forEach { quality ->
                             val selected = quality == currentAudioQuality
-                            Button(
-                                onClick = {
-                                    onSelectAudioQuality(quality)
-                                    audioQualityExpanded = false
-                                },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(52.dp)
-                                    .padding(vertical = 4.dp),
-                                shape = RoundedCornerShape(12.dp),
-                                colors = if (selected) {
-                                    ButtonDefaults.buttonColors(
-                                        containerColor = MaterialTheme.colorScheme.primary,
-                                        contentColor = MaterialTheme.colorScheme.onPrimary
-                                    )
-                                } else {
-                                    ButtonDefaults.buttonColors(
-                                        containerColor = MaterialTheme.colorScheme.surface,
-                                        contentColor = MaterialTheme.colorScheme.onSurface
+                            val label = audioQualityLabel(quality).substringBefore(" (")
+                            if (selected) {
+                                Button(
+                                    onClick = { /* 이미 선택됨 */ },
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(56.dp),
+                                    shape = RoundedCornerShape(12.dp)
+                                ) {
+                                    Text(
+                                        text = label,
+                                        fontSize = 15.sp,
+                                        fontWeight = FontWeight.Bold
                                     )
                                 }
-                            ) {
-                                Text(
-                                    text = audioQualityLabel(quality) + if (selected) "  ✓" else "",
-                                    fontSize = 16.sp,
-                                    fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal
-                                )
+                            } else {
+                                OutlinedButton(
+                                    onClick = { onSelectAudioQuality(quality) },
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(56.dp),
+                                    shape = RoundedCornerShape(12.dp)
+                                ) {
+                                    Text(
+                                        text = label,
+                                        fontSize = 15.sp
+                                    )
+                                }
                             }
                         }
                     }
                 }
             }
+
             // 음량 부스트 설정 카드
             Spacer(modifier = Modifier.height(16.dp))
 

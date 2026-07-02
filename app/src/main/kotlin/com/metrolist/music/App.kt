@@ -33,6 +33,7 @@ import com.metrolist.music.extensions.toEnum
 import com.metrolist.music.extensions.toInetSocketAddress
 import com.metrolist.music.utils.CrashHandler
 import com.metrolist.music.utils.cipher.CipherDeobfuscator
+import com.yausername.youtubedl_android.YoutubeDL
 import com.metrolist.music.utils.dataStore
 import com.metrolist.music.utils.reportException
 import dagger.hilt.android.HiltAndroidApp
@@ -53,6 +54,7 @@ import java.net.PasswordAuthentication
 import java.net.Proxy
 import java.util.Locale
 import javax.inject.Inject
+import com.metrolist.music.utils.YtdlpDroidExtractor
 
 @HiltAndroidApp
 class App :
@@ -92,6 +94,28 @@ class App :
         applicationScope.launch {
             initializeSettings()
             observeSettingsChanges()
+        }
+
+        // yt-dlp 컨텍스트 저장 (가벼움 - 즉시 실행, 재생 시 바로 쓸 수 있게)
+        com.metrolist.music.utils.YtdlpStreamExtractor.init(this@App)
+        YtdlpDroidExtractor.init(this@App)
+
+        // yt-dlp 초기화 + 최신 업데이트 (고음질 itag 774 추출용)
+        // 무거운 작업이라 백그라운드(IO)에서 1회만 실행
+        applicationScope.launch(Dispatchers.IO) {
+            try {
+                YoutubeDL.getInstance().init(this@App)
+                Timber.tag("YtdlpInit").d("yt-dlp 초기화 성공")
+                try {
+                    val status = YoutubeDL.getInstance()
+                        .updateYoutubeDL(this@App, YoutubeDL.UpdateChannel.NIGHTLY)
+                    Timber.tag("YtdlpInit").d("yt-dlp 업데이트 결과: $status")
+                } catch (e: Exception) {
+                    Timber.tag("YtdlpInit").e(e, "yt-dlp 업데이트 실패 (초기화는 성공)")
+                }
+            } catch (e: Exception) {
+                Timber.tag("YtdlpInit").e(e, "yt-dlp 초기화 실패")
+            }
         }
     }
 

@@ -197,8 +197,7 @@ object CipherDeobfuscator {
         val analysis = FunctionNameExtractor.analyzePlayerJs(playerJs, knownHash = hash)
 
         if (analysis.sigInfo == null) {
-            Timber.tag(TAG).e("Could not extract signature function info from player JS")
-            return null
+            Timber.tag(TAG).w("Sig function info not extracted via regex/hardcoded — will try brute-force in WebView")
         }
 
         if (analysis.nFuncInfo == null) {
@@ -206,7 +205,7 @@ object CipherDeobfuscator {
         }
 
         Timber.tag(TAG).d("Creating CipherWebView...")
-        Timber.tag(TAG).d("  sig: ${analysis.sigInfo.name} (constantArg=${analysis.sigInfo.constantArg}, hardcoded=${analysis.sigInfo.isHardcoded})")
+        Timber.tag(TAG).d("  sig: ${analysis.sigInfo?.name} (hardcoded=${analysis.sigInfo?.isHardcoded})")
         Timber.tag(TAG).d("  nFunc: ${analysis.nFuncInfo?.name}[${analysis.nFuncInfo?.arrayIndex}] (hardcoded=${analysis.nFuncInfo?.isHardcoded})")
 
         // Create WebView

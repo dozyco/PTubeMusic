@@ -98,7 +98,7 @@ fun PlayerSettings(
 ) {
     val (audioQuality, onAudioQualityChange) = rememberEnumPreference(
         AudioQualityKey,
-        defaultValue = AudioQuality.AUTO
+        defaultValue = AudioQuality.VERY_HIGH
     )
     val (crossfadeEnabled, onCrossfadeEnabledChange) = rememberPreference(
         CrossfadeEnabledKey,
@@ -310,21 +310,6 @@ fun PlayerSettings(
         Material3SettingsGroup(
             title = stringResource(R.string.player),
             items = buildList {
-                add(Material3SettingsItem(
-                    icon = painterResource(R.drawable.graphic_eq),
-                    title = { Text(stringResource(R.string.audio_quality)) },
-                    description = {
-                        Text(
-                            when (audioQuality) {
-                                AudioQuality.AUTO -> stringResource(R.string.audio_quality_auto)
-                                AudioQuality.HIGH -> stringResource(R.string.audio_quality_high)
-                                AudioQuality.VERY_HIGH -> "매우 높음"
-                                AudioQuality.LOW -> stringResource(R.string.audio_quality_low)
-                            }
-                        )
-                    },
-                    onClick = { showAudioQualityDialog = true }
-                ))
                 add(Material3SettingsItem(
                     icon = painterResource(R.drawable.linear_scale),
                     title = { Text(stringResource(R.string.crossfade)) },

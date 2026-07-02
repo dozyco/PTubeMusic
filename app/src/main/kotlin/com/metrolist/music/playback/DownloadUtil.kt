@@ -59,7 +59,7 @@ constructor(
 ) {
     private val TAG = "DownloadUtil"
     private val connectivityManager = context.getSystemService<ConnectivityManager>()!!
-    private val audioQuality by enumPreference(context, AudioQualityKey, AudioQuality.AUTO)
+    private val audioQuality by enumPreference(context, AudioQualityKey, AudioQuality.VERY_HIGH)
     private val songUrlCache = HashMap<String, Pair<String, Long>>()
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)

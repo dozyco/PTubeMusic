@@ -6,7 +6,9 @@ import androidx.media3.common.util.UnstableApi
 import timber.log.Timber
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import kotlin.math.abs
 import kotlin.math.pow
+import kotlin.math.tanh
 
 @UnstableApi
 @Suppress("DEPRECATION")
@@ -38,6 +40,10 @@ class VolumeNormalizationAudioProcessor : AudioProcessor {
     companion object {
         private const val TAG = "VolumeNormalizationProcessor"
         private val EMPTY_BUFFER: ByteBuffer = ByteBuffer.allocateDirect(0).order(ByteOrder.nativeOrder())
+
+        // 소프트 리미터: 풀스케일의 이 비율까지는 선형(원음 그대로),
+        // 그 위로는 부드럽게 눌러서 최대치를 절대 넘지 않게 함 → 하드 클리핑(찢어짐) 방지
+        private const val SOFT_KNEE = 0.8
     }
 
     @Synchronized
@@ -47,6 +53,22 @@ class VolumeNormalizationAudioProcessor : AudioProcessor {
             currentGain = GainState(gainMb, linearGain)
             Timber.tag(TAG).d("Target gain set to $gainMb mB (Linear multiplier: $linearGain)")
         }
+    }
+
+    /**
+     * 소프트 클리핑(소프트 리미터).
+     * |value| 가 max * SOFT_KNEE 이하이면 그대로 통과(왜곡 없음).
+     * 그 이상이면 tanh 로 부드럽게 압축해서 max 를 절대 넘지 않게 한다.
+     * 예전 LoudnessEnhancer 의 내장 리미터와 같은 역할.
+     */
+    private fun softClip(value: Double, max: Double): Double {
+        val threshold = max * SOFT_KNEE
+        val magnitude = abs(value)
+        if (magnitude <= threshold) return value
+        val sign = if (value >= 0.0) 1.0 else -1.0
+        val over = (magnitude - threshold) / (max - threshold)
+        val shaped = threshold + (max - threshold) * tanh(over)
+        return sign * shaped
     }
 
     override fun configure(inputAudioFormat: AudioProcessor.AudioFormat): AudioProcessor.AudioFormat {
@@ -88,8 +110,7 @@ class VolumeNormalizationAudioProcessor : AudioProcessor {
                 repeat(sampleCount) {
                     val sample = inputBuffer.getShort()
                     val processed = if (applyGain) {
-                        (sample * gain.linearGain)
-                            .coerceIn(-32768.0, 32767.0)
+                        softClip(sample * gain.linearGain, 32767.0)
                             .toInt()
                             .toShort()
                     } else {
@@ -107,9 +128,7 @@ class VolumeNormalizationAudioProcessor : AudioProcessor {
                     val sample = (b2 shl 16) or (b1 shl 8) or b0
 
                     val processed = if (applyGain) {
-                        (sample * gain.linearGain)
-                            .coerceIn(-8388608.0, 8388607.0)
-                            .toInt()
+                        softClip(sample * gain.linearGain, 8388607.0).toInt()
                     } else {
                         sample
                     }
@@ -123,8 +142,7 @@ class VolumeNormalizationAudioProcessor : AudioProcessor {
                 repeat(sampleCount) {
                     val sample = inputBuffer.getInt()
                     val processed = if (applyGain) {
-                        (sample * gain.linearGain)
-                            .coerceIn(-2147483648.0, 2147483647.0)
+                        softClip(sample * gain.linearGain, 2147483647.0)
                             .toLong()
                             .toInt()
                     } else {
@@ -138,7 +156,7 @@ class VolumeNormalizationAudioProcessor : AudioProcessor {
                 repeat(sampleCount) {
                     val sample = inputBuffer.getFloat()
                     val processed = if (applyGain) {
-                        (sample * gain.linearGain.toFloat()).coerceIn(-1.0f, 1.0f)
+                        softClip(sample.toDouble() * gain.linearGain, 1.0).toFloat()
                     } else {
                         sample
                     }

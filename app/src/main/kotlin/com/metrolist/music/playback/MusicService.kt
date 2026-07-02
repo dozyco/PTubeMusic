@@ -24,7 +24,7 @@ import android.media.AudioDeviceInfo
 import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.media.audiofx.AudioEffect
-import com.metrolist.music.playback.audio.VolumeNormalizationAudioProcessor
+import android.media.audiofx.LoudnessEnhancer
 import android.net.ConnectivityManager
 import android.os.Binder
 import android.os.Build
@@ -54,6 +54,7 @@ import androidx.media3.common.Timeline
 import androidx.media3.common.audio.SonicAudioProcessor
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DataSource
+import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.HttpDataSource
 import androidx.media3.datasource.ResolvingDataSource
@@ -395,7 +396,7 @@ class MusicService :
 
     private var isAudioEffectSessionOpened = false
     private var openedAudioEffectSessionId: Int = C.AUDIO_SESSION_ID_UNSET
-    private val volumeNormalizationProcessor = VolumeNormalizationAudioProcessor()
+    private var loudnessEnhancer: LoudnessEnhancer? = null
 
     private var loudnessSetupJob: Job? = null
     private var loudnessSetupGeneration: Long = 0L
@@ -457,9 +458,10 @@ class MusicService :
     private var cachedAutoLoadMore = true
 
     // URL cache for stream URLs - class-level so it can be invalidated on errors
+    // Triple: (streamUrl, expiresAtMillis, userAgent) — UA는 URL을 발급한 클라이언트의 것
     private val songUrlCache = Collections.synchronizedMap(
-        object : LinkedHashMap<String, Pair<String, Long>>(0, 0.75f, true) {
-            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Pair<String, Long>>): Boolean {
+        object : LinkedHashMap<String, Triple<String, Long, String?>>(0, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Triple<String, Long, String?>>): Boolean {
                 return size > 500
             }
         }
@@ -679,10 +681,16 @@ class MusicService :
 
         audioManager.registerAudioDeviceCallback(audioDeviceCallback, null)
 
-        audioQuality = dataStore.get(AudioQualityKey)?.let { value ->
-            com.metrolist.music.constants.AudioQuality.entries.find { it.name == value }
-        } ?: com.metrolist.music.constants.AudioQuality.AUTO
+        // 저장된 음질 설정을 읽는다. 미설정 시 기본값은 항상 최고음질(VERY_HIGH).
+        audioQuality = dataStore[AudioQualityKey].toEnum(com.metrolist.music.constants.AudioQuality.VERY_HIGH)
         android.util.Log.d("PTUBE", "AUDIO QUALITY in use: $audioQuality")
+
+        // 첫 곡 재생 지연 단축: PoToken WebView(BotGuard)를 미리 초기화해 둔다.
+        // App 쪽에서 쿠키/dataSyncId가 비동기로 로드되므로 잠시 기다렸다가 실행.
+        scope.launch(Dispatchers.IO) {
+            delay(3000)
+            YTPlayerUtils.prewarmPoToken()
+        }
         playerVolume = MutableStateFlow(dataStore.get(PlayerVolumeKey, 1f).coerceIn(0f, 1f))
 
         // Initialize Google Cast
@@ -742,10 +750,7 @@ class MusicService :
         scope.launch {
             dataStore.data
                 .map {
-                    it[AudioQualityKey]?.let { value ->
-                        if (value == "VERY_HIGH") com.metrolist.music.constants.AudioQuality.HIGH
-                        else com.metrolist.music.constants.AudioQuality.entries.find { it.name == value }
-                    } ?: com.metrolist.music.constants.AudioQuality.AUTO
+                    it[AudioQualityKey].toEnum(com.metrolist.music.constants.AudioQuality.VERY_HIGH)
                 }.distinctUntilChanged()
                 .collect { newQuality ->
                     val oldQuality = audioQuality
@@ -1318,6 +1323,7 @@ class MusicService :
     }
 
     private fun handleAudioFocusChange(focusChange: Int) {
+        com.metrolist.music.automotive.LogBuffer.log("오디오포커스 변경: focusChange=$focusChange (LOSS=-1, LOSS_TRANSIENT=-2, CAN_DUCK=-3, GAIN=1)")
         when (focusChange) {
             AudioManager.AUDIOFOCUS_GAIN,
             AudioManager.AUDIOFOCUS_GAIN_TRANSIENT,
@@ -1367,7 +1373,7 @@ class MusicService :
 
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
                 hasAudioFocus = false
-                audioFocusVolumeMultiplier.value = 0.2f
+                audioFocusVolumeMultiplier.value = 0.8f
                 wasPlayingBeforeAudioFocusLoss = player.isPlaying
                 if (player.isPlaying) {
                     applyEffectiveVolume()
@@ -2139,25 +2145,66 @@ class MusicService :
     }
 
     private fun applyCachedAudioNormalizationNow() {
+        val enhancer = loudnessEnhancer ?: return
         try {
             val baseBoost = baseBoostMbCached
             val gain = cachedNormalizationGainMb
             if (cachedNormalizationEnabled && gain != null) {
                 // normalization 켜져 있으면: normalization 게인 + 사용자 기본 부스트 합산
-                volumeNormalizationProcessor.setTargetGain(gain + baseBoost)
-                volumeNormalizationProcessor.enabled = true
+                enhancer.setTargetGain(gain + baseBoost)
+                enhancer.enabled = true
             } else {
                 // normalization 꺼져 있어도 사용자 기본 부스트는 적용
-                volumeNormalizationProcessor.setTargetGain(baseBoost)
-                volumeNormalizationProcessor.enabled = true
+                enhancer.setTargetGain(baseBoost)
+                enhancer.enabled = true
             }
         } catch (e: Exception) {
             reportException(e)
-            volumeNormalizationProcessor.enabled = false
+            releaseLoudnessEnhancer()
+        }
+    }
+
+    private fun createLoudnessEnhancerForSessionId(audioSessionId: Int): Boolean {
+        return try {
+            loudnessEnhancer = LoudnessEnhancer(audioSessionId)
+            Timber.tag(TAG).d("LoudnessEnhancer created for sessionId=$audioSessionId")
+            true
+        } catch (e: Exception) {
+            reportException(e)
+            loudnessEnhancer = null
+            false
+        }
+    }
+
+    private fun releaseLoudnessEnhancer(clearNormalizationCache: Boolean = true) {
+        try {
+            loudnessEnhancer?.release()
+            Timber.tag(TAG).d("LoudnessEnhancer released")
+        } catch (e: Exception) {
+            reportException(e)
+        } finally {
+            if (clearNormalizationCache) {
+                cachedNormalizationGainMb = null
+                cachedNormalizationEnabled = false
+            }
+            loudnessEnhancer = null
         }
     }
 
     private fun setupAudioNormalization() {
+        val audioSessionId = player.audioSessionId
+
+        if (audioSessionId == C.AUDIO_SESSION_ID_UNSET || audioSessionId <= 0) {
+            Timber.tag(TAG)
+                .w("setupAudioNormalization: invalid audioSessionId ($audioSessionId), cannot create effect yet")
+            return
+        }
+
+        // Create or recreate enhancer if needed
+        if (loudnessEnhancer == null && !createLoudnessEnhancerForSessionId(audioSessionId)) {
+            return
+        }
+
         val requestGeneration = ++loudnessSetupGeneration
         loudnessSetupJob?.cancel()
 
@@ -2176,14 +2223,12 @@ class MusicService :
 
                     val targetLufs = loudnessLevelCached.targetLufs
 
-                    Timber.tag(TAG).d("Audio normalization enabled: $normalizeAudio")
-                    
                     val measuredLufs: Double? = format?.perceptualLoudnessDb
                         ?: format?.loudnessDb?.let { it + LoudnessLevel.AGGRESSIVE.targetLufs }
 
                     withContext(Dispatchers.Main) {
                         if (!isActive || requestGeneration != loudnessSetupGeneration) return@withContext
-                        if (player.currentMediaItem?.mediaId != currentMediaId) return@withContext
+                        if (player.audioSessionId != audioSessionId || player.currentMediaItem?.mediaId != currentMediaId) return@withContext
 
                         when {
                             measuredLufs != null -> {
@@ -2194,8 +2239,8 @@ class MusicService :
                                 cachedNormalizationGainMb = clampedGain
                                 cachedNormalizationEnabled = true
                                 // baseBoost 를 더해서 적용해야 곡 중간/끝에서 부스트가 사라지지 않음
-                                volumeNormalizationProcessor.setTargetGain(clampedGain + baseBoostMbCached)
-                                volumeNormalizationProcessor.enabled = true
+                                loudnessEnhancer?.setTargetGain(clampedGain + baseBoostMbCached)
+                                loudnessEnhancer?.enabled = true
                             }
                             format == null -> {
                                 Timber.tag(TAG).d("Loudness row not ready yet; keeping cached normalization state")
@@ -2204,8 +2249,8 @@ class MusicService :
                                 cachedNormalizationGainMb = null
                                 cachedNormalizationEnabled = false
                                 // normalization 데이터 없어도 사용자 기본 부스트는 유지
-                                volumeNormalizationProcessor.setTargetGain(baseBoostMbCached)
-                                volumeNormalizationProcessor.enabled = true
+                                loudnessEnhancer?.setTargetGain(baseBoostMbCached)
+                                loudnessEnhancer?.enabled = true
                                 Timber.tag(TAG).w("No loudness data - applying base boost only")
                             }
                         }
@@ -2216,16 +2261,16 @@ class MusicService :
                         cachedNormalizationGainMb = null
                         cachedNormalizationEnabled = false
                         // normalization 꺼져 있어도 사용자 기본 부스트는 적용
-                        volumeNormalizationProcessor.setTargetGain(baseBoostMbCached)
-                        volumeNormalizationProcessor.enabled = true
-                        Timber.tag(TAG).d("normalization off, base boost only")
+                        loudnessEnhancer?.setTargetGain(baseBoostMbCached)
+                        loudnessEnhancer?.enabled = true
+                        Timber.tag(TAG).d("setupAudioNormalization: normalization off, base boost only")
                     }
                 }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 reportException(e)
-                volumeNormalizationProcessor.enabled = false
+                releaseLoudnessEnhancer()
             }
         }
     }
@@ -2236,16 +2281,37 @@ class MusicService :
             return
         }
 
-        if (isAudioEffectSessionOpened && openedAudioEffectSessionId == audioSessionId) {
+        if (isAudioEffectSessionOpened &&
+            openedAudioEffectSessionId == audioSessionId &&
+            loudnessEnhancer != null
+        ) {
+            applyCachedAudioNormalizationNow()
+            if (!cachedNormalizationEnabled || cachedNormalizationGainMb == null) {
+                setupAudioNormalization()
+            }
             return
         }
 
         if (isAudioEffectSessionOpened && openedAudioEffectSessionId > 0) {
             closeAudioEffectSession(sessionIdOverride = openedAudioEffectSessionId, clearNormalizationCache = false)
+        } else {
+            releaseLoudnessEnhancer(clearNormalizationCache = false)
+        }
+
+        val enhancerReady = loudnessEnhancer != null || createLoudnessEnhancerForSessionId(audioSessionId)
+        if (!enhancerReady) {
+            isAudioEffectSessionOpened = false
+            openedAudioEffectSessionId = C.AUDIO_SESSION_ID_UNSET
+            return
         }
 
         isAudioEffectSessionOpened = true
         openedAudioEffectSessionId = audioSessionId
+
+        applyCachedAudioNormalizationNow()
+        if (!cachedNormalizationEnabled || cachedNormalizationGainMb == null) {
+            setupAudioNormalization()
+        }
 
         sendBroadcast(
             Intent(android.media.audiofx.AudioEffect.ACTION_OPEN_AUDIO_EFFECT_CONTROL_SESSION).apply {
@@ -2270,7 +2336,9 @@ class MusicService :
                     sessionIdToClose == openedAudioEffectSessionId
 
         if (isClosingCurrentSession) {
-
+            if (loudnessEnhancer != null) {
+                releaseLoudnessEnhancer(clearNormalizationCache = clearNormalizationCache)
+            }
             isAudioEffectSessionOpened = false
             openedAudioEffectSessionId = C.AUDIO_SESSION_ID_UNSET
         }
@@ -3279,6 +3347,8 @@ class MusicService :
                                         } ?: response.request
                                     }.build(),
                             ),
+                            // User-Agent는 스트림 URL을 발급한 클라이언트와 일치해야 하므로
+                            // 여기 고정하지 않고 createDataSourceFactory에서 dataSpec 헤더로 싣는다.
                         ),
                     ),
             ).setCacheWriteDataSinkFactory(null)
@@ -3476,6 +3546,16 @@ class MusicService :
         }
     }
 
+    /**
+     * 스트림 요청에 URL 발급 클라이언트의 User-Agent를 싣는다.
+     * UA가 불일치하면 googlevideo가 403을 반환할 수 있다.
+     */
+    private fun DataSpec.withStreamUserAgent(userAgent: String?): DataSpec =
+        buildUpon()
+            .setHttpRequestHeaders(
+                httpRequestHeaders + ("User-Agent" to (userAgent ?: FALLBACK_STREAM_USER_AGENT))
+            ).build()
+
     private fun createDataSourceFactory(): DataSource.Factory {
         return ResolvingDataSource.Factory(createCacheDataSource()) { dataSpec ->
             val mediaId = dataSpec.key ?: error("No media id")
@@ -3496,9 +3576,9 @@ class MusicService :
                 }
 
                 if (usePlayerCache && playerCache.isCached(mediaId, dataSpec.position, CHUNK_LENGTH)) {
-                    songUrlCache[mediaId]?.takeIf { it.second > System.currentTimeMillis() }?.let { (url, _) ->
+                    songUrlCache[mediaId]?.takeIf { it.second > System.currentTimeMillis() }?.let { (url, _, ua) ->
                         scope.launch(Dispatchers.IO) { recoverSong(mediaId) }
-                        return@Factory dataSpec.withUri(url.toUri())
+                        return@Factory dataSpec.withUri(url.toUri()).withStreamUserAgent(ua)
                     }
                     Timber.tag(TAG).w("Ghost cache entry for $mediaId, re-fetching")
                     playerCache.removeResource(mediaId)
@@ -3506,7 +3586,7 @@ class MusicService :
 
                 songUrlCache[mediaId]?.takeIf { it.second > System.currentTimeMillis() }?.let {
                     scope.launch(Dispatchers.IO) { recoverSong(mediaId) }
-                    return@Factory dataSpec.withUri(it.first.toUri())
+                    return@Factory dataSpec.withUri(it.first.toUri()).withStreamUserAgent(it.third)
                 }
             } else {
                 Timber.tag(TAG).i("BYPASSING CACHE for $mediaId due to quality change")
@@ -3594,13 +3674,20 @@ class MusicService :
                 val streamUrl = nonNullPlayback.streamUrl
 
                 songUrlCache[mediaId] =
-                    streamUrl to System.currentTimeMillis() + (nonNullPlayback.streamExpiresInSeconds * 1000L)
+                    Triple(
+                        streamUrl,
+                        System.currentTimeMillis() + (nonNullPlayback.streamExpiresInSeconds * 1000L),
+                        nonNullPlayback.streamUserAgent,
+                    )
 
                 nonNullPlayback.playbackTracking?.videostatsPlaybackUrl?.baseUrl?.let {
                     playbackUrlCache[cacheKey(mediaId)] = it
                 }
 
-                return@Factory dataSpec.withUri(streamUrl.toUri()).subrange(dataSpec.uriPositionOffset, CHUNK_LENGTH)
+                return@Factory dataSpec
+                    .withUri(streamUrl.toUri())
+                    .subrange(dataSpec.uriPositionOffset, CHUNK_LENGTH)
+                    .withStreamUserAgent(nonNullPlayback.streamUserAgent)
             }
         }
     }
@@ -3630,7 +3717,6 @@ class MusicService :
                 DefaultAudioSink.DefaultAudioProcessorChain(
                     // 2. Inject processor into audio pipeline
                     arrayOf(
-                        volumeNormalizationProcessor,
                         eqProcessor,
                         silenceProcessor,
                     ),
@@ -4557,6 +4643,10 @@ class MusicService :
 
         const val CHANNEL_ID = "music_channel_01"
         const val NOTIFICATION_ID = 888
+
+        // UA를 모를 때(구버전 캐시 등) 쓰는 기본값 — 기존 하드코딩 UA와 동일
+        const val FALLBACK_STREAM_USER_AGENT =
+            "com.google.ios.youtube/21.02.3 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X;)"
         const val ERROR_CODE_NO_STREAM = 1000001
         const val CHUNK_LENGTH = 512 * 1024L
         const val PERSISTENT_QUEUE_FILE = "persistent_queue.data"
