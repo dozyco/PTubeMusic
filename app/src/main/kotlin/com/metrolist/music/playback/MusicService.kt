@@ -1319,6 +1319,10 @@ class MusicService :
                 ).setOnAudioFocusChangeListener { focusChange ->
                     handleAudioFocusChange(focusChange)
                 }.setAcceptsDelayedFocusGain(true)
+                // 시스템 자동 덕킹 차단: 이 플래그가 없으면 네비 안내 등 일시적 포커스 요청 때
+                // 프레임워크가 앱에 묻지 않고 볼륨을 자동으로 낮춘다. true로 선언하면
+                // CAN_DUCK 이벤트가 리스너로 전달되고, 리스너에서 무시하면 볼륨이 유지된다.
+                .setWillPauseWhenDucked(true)
                 .build()
     }
 
@@ -1372,12 +1376,11 @@ class MusicService :
             }
 
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
-                hasAudioFocus = false
-                audioFocusVolumeMultiplier.value = 0.8f
-                wasPlayingBeforeAudioFocusLoss = player.isPlaying
-                if (player.isPlaying) {
-                    applyEffectiveVolume()
-                }
+                // 네비 음성·속도 경고음 등의 덕킹 요청은 완전히 무시한다 — 음악 볼륨 유지.
+                // (setWillPauseWhenDucked(true)로 시스템 자동 덕킹도 막아둔 상태)
+                // 포커스를 잃은 것으로 취급하지 않아야 재생 로직이 흔들리지 않는다.
+                com.metrolist.music.automotive.LogBuffer.log("덕킹 요청 무시 — 음악 볼륨 유지")
+                audioFocusVolumeMultiplier.value = 1f
                 lastAudioFocusState = focusChange
             }
 
