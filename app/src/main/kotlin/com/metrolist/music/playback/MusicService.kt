@@ -1319,10 +1319,10 @@ class MusicService :
                 ).setOnAudioFocusChangeListener { focusChange ->
                     handleAudioFocusChange(focusChange)
                 }.setAcceptsDelayedFocusGain(true)
-                // 시스템 자동 덕킹 차단: 이 플래그가 없으면 네비 안내 등 일시적 포커스 요청 때
-                // 프레임워크가 앱에 묻지 않고 볼륨을 자동으로 낮춘다. true로 선언하면
-                // CAN_DUCK 이벤트가 리스너로 전달되고, 리스너에서 무시하면 볼륨이 유지된다.
-                .setWillPauseWhenDucked(true)
+                // 주의: setWillPauseWhenDucked(true)를 쓰면 안 된다 — AAOS(CarAudioFocus)는
+                // 이 플래그를 "덕킹 대신 일시정지 원함"으로 해석해 CAN_DUCK(-3) 대신
+                // LOSS_TRANSIENT(-2)를 보내서 네비 알림 때 노래가 일시정지된다(폴스타4 실차 확인).
+                // 플래그 없이 CAN_DUCK을 받아 리스너에서 무시(볼륨 유지)하는 방식을 쓴다.
                 .build()
     }
 
