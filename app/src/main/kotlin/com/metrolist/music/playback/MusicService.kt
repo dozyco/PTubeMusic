@@ -184,6 +184,7 @@ import com.metrolist.music.models.toMediaMetadata
 import com.metrolist.music.playback.alarm.MusicAlarmScheduler
 import com.metrolist.music.playback.alarm.MusicAlarmStore
 import com.metrolist.music.playback.audio.SilenceDetectorAudioProcessor
+import com.metrolist.music.playback.audio.VolumeNormalizationAudioProcessor
 import com.metrolist.music.playback.queues.EmptyQueue
 import com.metrolist.music.playback.queues.ListQueue
 import com.metrolist.music.playback.queues.Queue
@@ -391,6 +392,15 @@ class MusicService :
     val playerFlow = _playerFlow.asStateFlow()
 
     private val playerSilenceProcessors = HashMap<Player, SilenceDetectorAudioProcessor>()
+
+    // 부스트/정규화 게인을 float 연산 + 소프트 리미터로 적용하는 프로세서 (플레이어별).
+    // LoudnessEnhancer 의 내장 리미터보다 자연스럽고, 오프로드 시에만 enhancer 로 폴백한다.
+    private val playerVolumeProcessors = HashMap<Player, VolumeNormalizationAudioProcessor>()
+
+    // 오디오 오프로드 활성 여부 캐시 — 오프로드 중에는 AudioProcessor 가 우회되므로
+    // 게인을 LoudnessEnhancer 경로로 보내야 한다.
+    @Volatile
+    private var offloadActiveCached: Boolean = false
 
     private val instantSilenceSkipEnabled = MutableStateFlow(false)
 
@@ -934,6 +944,11 @@ class MusicService :
             .collectLatest(scope) { useOffload ->
                 player.setOffloadEnabled(useOffload)
                 secondaryPlayer?.setOffloadEnabled(useOffload)
+                // 오프로드 전환 시 게인 경로(프로세서 ↔ enhancer)도 다시 라우팅
+                if (offloadActiveCached != useOffload) {
+                    offloadActiveCached = useOffload
+                    applyCachedAudioNormalizationNow()
+                }
             }
 
         var isFirstAudioTrackParamsEmit = true
@@ -962,6 +977,7 @@ class MusicService :
                 player.removeListener(this)
                 player.removeListener(sleepTimer)
                 playerSilenceProcessors.remove(player)
+                synchronized(playerVolumeProcessors) { playerVolumeProcessors.remove(player) }
                 player.release()
 
                 val newPlayer = createExoPlayer()
@@ -1283,6 +1299,7 @@ class MusicService :
         equalizerService.addAudioProcessor(eqProcessor)
 
         val silenceProcessor = SilenceDetectorAudioProcessor { handleLongSilenceDetected() }
+        val volumeProcessor = VolumeNormalizationAudioProcessor()
 
         // Set initial state
         val useAudioTrackPlaybackParams = runBlocking {
@@ -1296,7 +1313,7 @@ class MusicService :
             ExoPlayer
                 .Builder(this)
                 .setMediaSourceFactory(createMediaSourceFactory())
-                .setRenderersFactory(createRenderersFactory(eqProcessor, silenceProcessor, useAudioTrackPlaybackParams))
+                .setRenderersFactory(createRenderersFactory(eqProcessor, silenceProcessor, volumeProcessor, useAudioTrackPlaybackParams))
                 .setHandleAudioBecomingNoisy(true)
                 .setWakeMode(C.WAKE_MODE_NETWORK)
                 .setAudioAttributes(
@@ -1312,12 +1329,17 @@ class MusicService :
                 .build()
 
         playerSilenceProcessors[player] = silenceProcessor
+        synchronized(playerVolumeProcessors) { playerVolumeProcessors[player] = volumeProcessor }
+        // 새 플레이어에도 현재 게인(정규화+부스트+덕킹 보상)을 바로 적용
+        applyCachedAudioNormalizationNow()
 
         player.apply {
             runBlocking {
                 val offload = dataStore.get(AudioOffload, false)
                 val crossfade = dataStore.get(CrossfadeEnabledKey, false)
-                setOffloadEnabled(if (crossfade) false else offload)
+                val useOffload = if (crossfade) false else offload
+                offloadActiveCached = useOffload
+                setOffloadEnabled(useOffload)
                 skipSilenceEnabled = dataStore.get(SkipSilenceKey, false)
             }
             addAnalyticsListener(PlaybackStatsListener(false, this@MusicService))
@@ -2178,20 +2200,48 @@ class MusicService :
         )
     }
 
+    /**
+     * 정규화+기본 부스트+덕킹 보상의 총 게인을 실제 오디오 경로에 적용한다.
+     *
+     * 기본 경로: [VolumeNormalizationAudioProcessor] — float 연산 + 소프트 리미터라
+     * 리미팅이 걸릴 때 LoudnessEnhancer 내장 리미터보다 자연스럽다.
+     * 오디오 오프로드 중에는 AudioProcessor 가 우회되므로 LoudnessEnhancer 로 폴백.
+     */
+    private fun setEffectiveLoudnessGain(totalGainMb: Int) {
+        if (!offloadActiveCached) {
+            synchronized(playerVolumeProcessors) {
+                playerVolumeProcessors.values.forEach {
+                    it.setTargetGain(totalGainMb)
+                    it.enabled = true
+                }
+            }
+            // 프로세서가 게인을 담당하므로 enhancer 는 끈다 (이중 적용 방지)
+            try {
+                loudnessEnhancer?.setTargetGain(0)
+                loudnessEnhancer?.enabled = false
+            } catch (_: Exception) {
+            }
+        } else {
+            synchronized(playerVolumeProcessors) {
+                playerVolumeProcessors.values.forEach { it.enabled = false }
+            }
+            loudnessEnhancer?.setTargetGain(totalGainMb)
+            loudnessEnhancer?.enabled = true
+        }
+    }
+
     private fun applyCachedAudioNormalizationNow() {
-        val enhancer = loudnessEnhancer ?: return
         try {
             val baseBoost = baseBoostMbCached + duckCompensationMb()
             val gain = cachedNormalizationGainMb
-            if (cachedNormalizationEnabled && gain != null) {
+            val total = if (cachedNormalizationEnabled && gain != null) {
                 // normalization 켜져 있으면: normalization 게인 + 사용자 기본 부스트(+덕킹 보상) 합산
-                enhancer.setTargetGain(gain + baseBoost)
-                enhancer.enabled = true
+                gain + baseBoost
             } else {
                 // normalization 꺼져 있어도 사용자 기본 부스트(+덕킹 보상)는 적용
-                enhancer.setTargetGain(baseBoost)
-                enhancer.enabled = true
+                baseBoost
             }
+            setEffectiveLoudnessGain(total)
         } catch (e: Exception) {
             reportException(e)
             releaseLoudnessEnhancer()
@@ -2234,8 +2284,9 @@ class MusicService :
             return
         }
 
-        // Create or recreate enhancer if needed
-        if (loudnessEnhancer == null && !createLoudnessEnhancerForSessionId(audioSessionId)) {
+        // Create or recreate enhancer if needed.
+        // 프로세서 경로(비오프로드)에서는 enhancer 생성 실패해도 게인 적용이 가능하므로 계속 진행.
+        if (loudnessEnhancer == null && !createLoudnessEnhancerForSessionId(audioSessionId) && offloadActiveCached) {
             return
         }
 
@@ -2273,8 +2324,7 @@ class MusicService :
                                 cachedNormalizationGainMb = clampedGain
                                 cachedNormalizationEnabled = true
                                 // baseBoost 를 더해서 적용해야 곡 중간/끝에서 부스트가 사라지지 않음
-                                loudnessEnhancer?.setTargetGain(clampedGain + baseBoostMbCached + duckCompensationMb())
-                                loudnessEnhancer?.enabled = true
+                                setEffectiveLoudnessGain(clampedGain + baseBoostMbCached + duckCompensationMb())
                             }
                             format == null -> {
                                 Timber.tag(TAG).d("Loudness row not ready yet; keeping cached normalization state")
@@ -2283,8 +2333,7 @@ class MusicService :
                                 cachedNormalizationGainMb = null
                                 cachedNormalizationEnabled = false
                                 // normalization 데이터 없어도 사용자 기본 부스트는 유지
-                                loudnessEnhancer?.setTargetGain(baseBoostMbCached + duckCompensationMb())
-                                loudnessEnhancer?.enabled = true
+                                setEffectiveLoudnessGain(baseBoostMbCached + duckCompensationMb())
                                 Timber.tag(TAG).w("No loudness data - applying base boost only")
                             }
                         }
@@ -2295,8 +2344,7 @@ class MusicService :
                         cachedNormalizationGainMb = null
                         cachedNormalizationEnabled = false
                         // normalization 꺼져 있어도 사용자 기본 부스트는 적용
-                        loudnessEnhancer?.setTargetGain(baseBoostMbCached + duckCompensationMb())
-                        loudnessEnhancer?.enabled = true
+                        setEffectiveLoudnessGain(baseBoostMbCached + duckCompensationMb())
                         Timber.tag(TAG).d("setupAudioNormalization: normalization off, base boost only")
                     }
                 }
@@ -3737,6 +3785,7 @@ class MusicService :
     private fun createRenderersFactory(
         eqProcessor: CustomEqualizerAudioProcessor,
         silenceProcessor: SilenceDetectorAudioProcessor,
+        volumeProcessor: VolumeNormalizationAudioProcessor,
         useAudioTrackPlaybackParams: Boolean,
     ) = object : DefaultRenderersFactory(this) {
         override fun buildAudioSink(
@@ -3750,9 +3799,11 @@ class MusicService :
             .setAudioProcessorChain(
                 DefaultAudioSink.DefaultAudioProcessorChain(
                     // 2. Inject processor into audio pipeline
+                    // volumeProcessor 는 마지막: EQ 로 커진 신호까지 소프트 리미터가 잡는다
                     arrayOf(
                         eqProcessor,
                         silenceProcessor,
+                        volumeProcessor,
                     ),
                     SilenceSkippingAudioProcessor(2_000_000, 20_000, 256),
                     SonicAudioProcessor(),
@@ -4017,6 +4068,7 @@ class MusicService :
         player.removeListener(this)
         player.removeListener(sleepTimer)
         playerSilenceProcessors.remove(player)
+        synchronized(playerVolumeProcessors) { playerVolumeProcessors.remove(player) }
         // Note: equalizerService audio processors are cleared in equalizerService.release() if needed,
         // or we can't easily reference the specific processor created in createExoPlayer here without storing it.
         // But since we are destroying the service, it's fine.
