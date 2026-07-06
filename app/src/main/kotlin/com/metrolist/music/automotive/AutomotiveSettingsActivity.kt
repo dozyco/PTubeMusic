@@ -93,6 +93,7 @@ class AutomotiveSettingsActivity : ComponentActivity() {
                     onLogoutClick = { performLogout() },
                     onSelectAudioQuality = { quality -> saveAudioQuality(quality) },
                     onSelectBaseBoost = { db -> saveBaseBoost(db) },
+                    onSelectDuckBoost = { db -> saveDuckBoost(db) },
                     onRestartClick = { restartApp() }
                 )
             }
@@ -224,6 +225,17 @@ class AutomotiveSettingsActivity : ComponentActivity() {
     }
 
     /**
+     * 네비 안내/경고음 덕킹 동안 적용할 보상 부스트(dB)를 저장한다.
+     */
+    private fun saveDuckBoost(db: Int) {
+        lifecycleScope.launch {
+            dataStore.edit { prefs ->
+                prefs[com.metrolist.music.constants.DuckBoostDbKey] = db.coerceIn(0, 20)
+            }
+        }
+    }
+
+    /**
      * 앱 프로세스를 재시작한다. 차량 환경에서는 MainActivity(모바일 UI)를 띄우면 안 되고,
      * 설정 화면을 닫고 프로세스만 종료하면 차량 시스템이 미디어 앱을 다시 연결한다.
      */
@@ -256,6 +268,7 @@ private fun SettingsScreen(
     onLogoutClick: () -> Unit,
     onSelectAudioQuality: (AudioQuality) -> Unit,
     onSelectBaseBoost: (Int) -> Unit,
+    onSelectDuckBoost: (Int) -> Unit,
     onRestartClick: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -716,6 +729,52 @@ private fun SettingsScreen(
                         onValueChangeFinished = { onSelectBaseBoost(boostValue.toInt()) },
                         valueRange = 0f..30f,
                         steps = 29, // 0~30 정수 단위
+                    )
+                }
+            }
+
+            // 네비 덕킹 보상 부스트 카드
+            Spacer(modifier = Modifier.height(16.dp))
+
+            val initialDuckBoost = remember {
+                context.dataStore.get(com.metrolist.music.constants.DuckBoostDbKey,
+                    com.metrolist.music.constants.DEFAULT_DUCK_BOOST_DB)
+            }
+            var duckBoostValue by remember { mutableStateOf(initialDuckBoost.toFloat()) }
+
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant
+                ),
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(24.dp)
+                ) {
+                    Text(
+                        text = "네비 안내 중 볼륨 보상",
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+
+                    Spacer(modifier = Modifier.height(4.dp))
+
+                    Text(
+                        text = "현재: +${duckBoostValue.toInt()} dB — 네비 음성·경고음이 나와 차량이 음악 소리를 낮추는 동안, 그만큼 음악을 키워서 상쇄합니다 (0 = 보상 없음)",
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    Slider(
+                        value = duckBoostValue,
+                        onValueChange = { duckBoostValue = it },
+                        onValueChangeFinished = { onSelectDuckBoost(duckBoostValue.toInt()) },
+                        valueRange = 0f..20f,
+                        steps = 19, // 0~20 정수 단위
                     )
                 }
             }

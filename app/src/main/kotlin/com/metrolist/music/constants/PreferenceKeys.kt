@@ -134,6 +134,11 @@ val LoudnessLevelKey = stringPreferencesKey("loudnessLevel")
 val BaseBoostDbKey = intPreferencesKey("baseBoostDb")
 const val DEFAULT_BASE_BOOST_DB = 0
 
+// 네비 안내/경고음 덕킹(차량이 음악 볼륨을 낮출 때) 동안 추가할 보상 부스트 (단위: dB, 0~20).
+// 차량 HAL 레벨 덕킹은 앱에서 막을 수 없으므로, 덕킹 이벤트 동안만 게인을 올려 상쇄한다.
+val DuckBoostDbKey = intPreferencesKey("duckBoostDb")
+const val DEFAULT_DUCK_BOOST_DB = 10
+
 enum class LoudnessLevel(
     val targetLufs: Float
 ) {

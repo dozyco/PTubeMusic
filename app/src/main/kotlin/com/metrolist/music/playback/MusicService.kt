@@ -408,6 +408,16 @@ class MusicService :
     @Volatile
     private var baseBoostMbCached: Int = com.metrolist.music.constants.DEFAULT_BASE_BOOST_DB * 100
 
+    // 네비 안내/경고음 덕킹 동안 추가할 보상 부스트 (millibel)와 활성 상태.
+    // 차량(HAL)이 낮춘 볼륨을 앱 게인으로 상쇄한다.
+    @Volatile
+    private var duckBoostMbCached: Int = com.metrolist.music.constants.DEFAULT_DUCK_BOOST_DB * 100
+    @Volatile
+    private var duckCompensationActive: Boolean = false
+
+    /** 현재 시점에 LoudnessEnhancer 목표 게인에 더해야 할 덕킹 보상값(mB). */
+    private fun duckCompensationMb(): Int = if (duckCompensationActive) duckBoostMbCached else 0
+
     @Volatile
     private var loudnessLevelCached: LoudnessLevel = LoudnessLevel.BALANCED
 
@@ -902,6 +912,18 @@ class MusicService :
                 setupAudioNormalization()
             }
 
+        // 덕킹 보상 부스트 설정 변경 감지 → 캐시 갱신 (덕킹 중이면 즉시 반영)
+        dataStore.data
+            .map { (it[com.metrolist.music.constants.DuckBoostDbKey] ?: com.metrolist.music.constants.DEFAULT_DUCK_BOOST_DB) }
+            .distinctUntilChanged()
+            .collectLatest(scope) { boostDb ->
+                duckBoostMbCached = boostDb.coerceIn(0, 20) * 100
+                Timber.tag(TAG).d("Duck boost changed: ${boostDb}dB (${duckBoostMbCached}mB)")
+                if (duckCompensationActive) {
+                    applyCachedAudioNormalizationNow()
+                }
+            }
+
         combine(
             dataStore.data.map { it[AudioOffload] ?: false },
             dataStore.data.map { it[CrossfadeEnabledKey] ?: false },
@@ -1334,6 +1356,12 @@ class MusicService :
             -> {
                 hasAudioFocus = true
                 audioFocusVolumeMultiplier.value = 1f
+                // 덕킹이 끝났으므로 보상 부스트 해제
+                if (duckCompensationActive) {
+                    com.metrolist.music.automotive.LogBuffer.log("덕킹 종료 — 보상 부스트 해제")
+                    duckCompensationActive = false
+                    applyCachedAudioNormalizationNow()
+                }
 
                 if (wasPlayingBeforeAudioFocusLoss && !player.isPlaying && !reentrantFocusGain) {
                     reentrantFocusGain = true
@@ -1357,6 +1385,7 @@ class MusicService :
             AudioManager.AUDIOFOCUS_LOSS -> {
                 hasAudioFocus = false
                 audioFocusVolumeMultiplier.value = 1f
+                duckCompensationActive = false
                 wasPlayingBeforeAudioFocusLoss = player.isPlaying
                 if (player.isPlaying) {
                     player.pause()
@@ -1368,6 +1397,7 @@ class MusicService :
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
                 hasAudioFocus = false
                 audioFocusVolumeMultiplier.value = 1f
+                duckCompensationActive = false
                 wasPlayingBeforeAudioFocusLoss = player.isPlaying
                 if (player.isPlaying) {
                     player.pause()
@@ -1376,11 +1406,12 @@ class MusicService :
             }
 
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
-                // 네비 음성·속도 경고음 등의 덕킹 요청은 완전히 무시한다 — 음악 볼륨 유지.
-                // (setWillPauseWhenDucked(true)로 시스템 자동 덕킹도 막아둔 상태)
-                // 포커스를 잃은 것으로 취급하지 않아야 재생 로직이 흔들리지 않는다.
-                com.metrolist.music.automotive.LogBuffer.log("덕킹 요청 무시 — 음악 볼륨 유지")
+                // 네비 음성·속도 경고음 등의 덕킹 요청: 앱은 볼륨을 낮추지 않고,
+                // 차량(HAL)이 낮춘 만큼을 보상 부스트로 상쇄한다.
+                com.metrolist.music.automotive.LogBuffer.log("덕킹 감지 — 보상 부스트 +${duckBoostMbCached / 100}dB 적용")
                 audioFocusVolumeMultiplier.value = 1f
+                duckCompensationActive = true
+                applyCachedAudioNormalizationNow()
                 lastAudioFocusState = focusChange
             }
 
@@ -2150,14 +2181,14 @@ class MusicService :
     private fun applyCachedAudioNormalizationNow() {
         val enhancer = loudnessEnhancer ?: return
         try {
-            val baseBoost = baseBoostMbCached
+            val baseBoost = baseBoostMbCached + duckCompensationMb()
             val gain = cachedNormalizationGainMb
             if (cachedNormalizationEnabled && gain != null) {
-                // normalization 켜져 있으면: normalization 게인 + 사용자 기본 부스트 합산
+                // normalization 켜져 있으면: normalization 게인 + 사용자 기본 부스트(+덕킹 보상) 합산
                 enhancer.setTargetGain(gain + baseBoost)
                 enhancer.enabled = true
             } else {
-                // normalization 꺼져 있어도 사용자 기본 부스트는 적용
+                // normalization 꺼져 있어도 사용자 기본 부스트(+덕킹 보상)는 적용
                 enhancer.setTargetGain(baseBoost)
                 enhancer.enabled = true
             }
@@ -2242,7 +2273,7 @@ class MusicService :
                                 cachedNormalizationGainMb = clampedGain
                                 cachedNormalizationEnabled = true
                                 // baseBoost 를 더해서 적용해야 곡 중간/끝에서 부스트가 사라지지 않음
-                                loudnessEnhancer?.setTargetGain(clampedGain + baseBoostMbCached)
+                                loudnessEnhancer?.setTargetGain(clampedGain + baseBoostMbCached + duckCompensationMb())
                                 loudnessEnhancer?.enabled = true
                             }
                             format == null -> {
@@ -2252,7 +2283,7 @@ class MusicService :
                                 cachedNormalizationGainMb = null
                                 cachedNormalizationEnabled = false
                                 // normalization 데이터 없어도 사용자 기본 부스트는 유지
-                                loudnessEnhancer?.setTargetGain(baseBoostMbCached)
+                                loudnessEnhancer?.setTargetGain(baseBoostMbCached + duckCompensationMb())
                                 loudnessEnhancer?.enabled = true
                                 Timber.tag(TAG).w("No loudness data - applying base boost only")
                             }
@@ -2264,7 +2295,7 @@ class MusicService :
                         cachedNormalizationGainMb = null
                         cachedNormalizationEnabled = false
                         // normalization 꺼져 있어도 사용자 기본 부스트는 적용
-                        loudnessEnhancer?.setTargetGain(baseBoostMbCached)
+                        loudnessEnhancer?.setTargetGain(baseBoostMbCached + duckCompensationMb())
                         loudnessEnhancer?.enabled = true
                         Timber.tag(TAG).d("setupAudioNormalization: normalization off, base boost only")
                     }
