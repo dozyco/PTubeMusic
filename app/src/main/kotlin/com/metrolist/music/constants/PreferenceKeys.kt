@@ -34,6 +34,11 @@ enum class MiniPlayerBackgroundStyle {
 val DensityScaleKey = floatPreferencesKey("density_scale_factor")
 val CustomDensityScaleKey = floatPreferencesKey("custom_density_scale_value")
 
+// 차량(AAOS)에서 모바일 UI 전체 배율. 크게 하면 아이템이 커지고 화면당 표시 개수가
+// 줄어 이미지 동시 로딩 부담(렉)도 감소한다. 폴스타4 기본 1.5배.
+val AutomotiveUiScaleKey = floatPreferencesKey("automotiveUiScale")
+const val DEFAULT_AUTOMOTIVE_UI_SCALE = 1.5f
+
 enum class DensityScale(
     val value: Float,
     val label: String,

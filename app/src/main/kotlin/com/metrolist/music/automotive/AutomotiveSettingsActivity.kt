@@ -94,6 +94,7 @@ class AutomotiveSettingsActivity : ComponentActivity() {
                     onSelectAudioQuality = { quality -> saveAudioQuality(quality) },
                     onSelectBaseBoost = { db -> saveBaseBoost(db) },
                     onSelectDuckBoost = { db -> saveDuckBoost(db) },
+                    onSelectUiScale = { scale -> saveUiScale(scale) },
                     onRestartClick = { restartApp() }
                 )
             }
@@ -236,6 +237,17 @@ class AutomotiveSettingsActivity : ComponentActivity() {
     }
 
     /**
+     * 모바일 UI 전체 배율을 저장한다. MainActivity 가 DataStore 를 구독해 즉시 반영한다.
+     */
+    private fun saveUiScale(scale: Float) {
+        lifecycleScope.launch {
+            dataStore.edit { prefs ->
+                prefs[com.metrolist.music.constants.AutomotiveUiScaleKey] = scale.coerceIn(1.0f, 2.0f)
+            }
+        }
+    }
+
+    /**
      * 앱 프로세스를 재시작한다. 차량 환경에서는 MainActivity(모바일 UI)를 띄우면 안 되고,
      * 설정 화면을 닫고 프로세스만 종료하면 차량 시스템이 미디어 앱을 다시 연결한다.
      */
@@ -269,6 +281,7 @@ private fun SettingsScreen(
     onSelectAudioQuality: (AudioQuality) -> Unit,
     onSelectBaseBoost: (Int) -> Unit,
     onSelectDuckBoost: (Int) -> Unit,
+    onSelectUiScale: (Float) -> Unit,
     onRestartClick: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -775,6 +788,52 @@ private fun SettingsScreen(
                         onValueChangeFinished = { onSelectDuckBoost(duckBoostValue.toInt()) },
                         valueRange = 0f..20f,
                         steps = 19, // 0~20 정수 단위
+                    )
+                }
+            }
+
+            // 모바일 UI 크기 카드
+            Spacer(modifier = Modifier.height(16.dp))
+
+            val initialUiScale = remember {
+                context.dataStore.get(com.metrolist.music.constants.AutomotiveUiScaleKey,
+                    com.metrolist.music.constants.DEFAULT_AUTOMOTIVE_UI_SCALE)
+            }
+            var uiScaleValue by remember { mutableStateOf(initialUiScale) }
+
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant
+                ),
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(24.dp)
+                ) {
+                    Text(
+                        text = "모바일 UI 크기",
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+
+                    Spacer(modifier = Modifier.height(4.dp))
+
+                    Text(
+                        text = "현재: ${(uiScaleValue * 100).toInt()}% — 크게 하면 글자·앨범아트가 커지고 화면에 표시되는 항목 수가 줄어 로딩 렉도 완화됩니다. 조절 즉시 반영.",
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    Slider(
+                        value = uiScaleValue,
+                        onValueChange = { uiScaleValue = it },
+                        onValueChangeFinished = { onSelectUiScale(uiScaleValue) },
+                        valueRange = 1.0f..2.0f,
+                        steps = 19, // 5% 단위
                     )
                 }
             }

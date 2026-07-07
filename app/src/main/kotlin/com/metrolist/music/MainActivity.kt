@@ -654,8 +654,19 @@ class MainActivity : ComponentActivity() {
             val windowInfo = LocalWindowInfo.current
             val containerWidthDp = windowInfo.containerDpSize.width
 
-            val densityScale = remember(containerWidthDp) {
+            val isAutomotive = remember {
+                packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_AUTOMOTIVE)
+            }
+            val automotiveUiScale by rememberPreference(
+                com.metrolist.music.constants.AutomotiveUiScaleKey,
+                com.metrolist.music.constants.DEFAULT_AUTOMOTIVE_UI_SCALE,
+            )
+
+            val densityScale = remember(containerWidthDp, isAutomotive, automotiveUiScale) {
                 when {
+                    // 차량(AAOS): 시거리가 멀고 터치 정확도가 낮으므로 사용자가 설정한 배율로
+                    // 전체 UI를 키운다. 화면당 아이템 수가 줄어 렉(이미지 동시 로딩)도 완화.
+                    isAutomotive -> automotiveUiScale.coerceIn(1.0f, 2.0f)
                     containerWidthDp >= 840.dp -> 1.25f
                     containerWidthDp >= 720.dp -> 1.15f
                     containerWidthDp >= 600.dp -> 1.1f
