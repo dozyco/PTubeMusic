@@ -1,5 +1,6 @@
 import org.gradle.api.DefaultTask
 import org.gradle.api.file.DirectoryProperty
+
 import org.gradle.api.file.RegularFileProperty
 import org.gradle.api.provider.Property
 import org.gradle.api.tasks.Input
@@ -27,6 +28,10 @@ val debugKeyAlias = System.getenv("METROLIST_DEBUG_KEY_ALIAS")?.takeIf { it.isNo
 val debugKeyPassword = System.getenv("METROLIST_DEBUG_KEY_PASSWORD")?.takeIf { it.isNotBlank() } ?: "android"
 val persistentDebugKeystoreFile = file("persistent-debug.keystore")
 val workflowDebugKeystoreFile = debugKeystorePathOverride?.let(::file)
+
+// 배포용 arm64 전용 빌드 스위치. 개발 빌드는 유니버설 유지.
+// 사용법: gradlew :app:assembleGmsDebug -Parm64Only=true
+val arm64Only = (findProperty("arm64Only") as? String) == "true"
 
 plugins {
     id("com.android.application")
@@ -64,7 +69,13 @@ abstract class GenerateProtoTask : DefaultTask() {
             val url = protocUrl.get()
             logger.lifecycle("Downloading protoc ${url.substringAfterLast('/')} from $url")
             protocFile.parentFile.mkdirs()
-            URL(url).openStream().use { input ->
+            val connection = URL(url).openConnection() as java.net.HttpURLConnection
+            connection.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+            val responseCode = connection.responseCode
+            if (responseCode !in 200..299) {
+                throw GradleException("Failed to download protoc: Server returned HTTP response code $responseCode for URL: $url")
+            }
+            connection.inputStream.use { input ->
                 protocFile.outputStream().use { output ->
                     input.copyTo(output)
                 }
@@ -88,18 +99,25 @@ abstract class GenerateProtoTask : DefaultTask() {
 
 android {
     namespace = "com.metrolist.music"
-    compileSdk = 36
+    compileSdk = 37
 
     defaultConfig {
         applicationId = applicationIdOverride ?: baseApplicationId
         minSdk = 26
         targetSdk = 36
-        versionCode = 146
-        versionName = "13.4.2"
+        versionCode = 149
+        versionName = "13.6.0"
         resValue("string", "app_name", appNameOverride ?: "Metrolist")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
+
+        ndk {
+            // -Parm64Only=true 일 때만 arm64 전용으로 패키징 (폴스타4 배포용, 용량 절감)
+            if (arm64Only) {
+                abiFilters += "arm64-v8a"
+            }
+        }
 
         // LastFM API keys from GitHub Secrets
         val lastFmKey = localProperties.getProperty("LASTFM_API_KEY") ?: System.getenv("LASTFM_API_KEY") ?: ""
@@ -107,12 +125,13 @@ android {
 
         buildConfigField("String", "LASTFM_API_KEY", "\"$lastFmKey\"")
         buildConfigField("String", "LASTFM_SECRET", "\"$lastFmSecret\"")
-        buildConfigField("String", "ARCHITECTURE", "\"universal\"")
+        buildConfigField("String", "ARCHITECTURE", if (arm64Only) "\"arm64-v8a\"" else "\"universal\"")
+        buildConfigField("Long", "DISCORD_APP_ID", "1447278780795064401L")
     }
 
     flavorDimensions += listOf("variant")
     productFlavors {
-        // FOSS variant (default) - F-Droid compatible, no Google Play Services
+        // FOSS - Updater, but no gcast
         create("foss") {
             dimension = "variant"
             isDefault = true
@@ -120,14 +139,14 @@ android {
             buildConfigField("Boolean", "UPDATER_AVAILABLE", "true")
         }
 
-        // GMS variant - with Google Cast support (requires Google Play Services)
+        // GMS - Updater and gcast
         create("gms") {
             dimension = "variant"
             buildConfigField("Boolean", "CAST_AVAILABLE", "true")
             buildConfigField("Boolean", "UPDATER_AVAILABLE", "true")
         }
 
-        // IzzyOnDroid variant - no Google Cast, no built-in updater (store handles updates)
+        // IzzyOnDroid - no gcast, no updater - the ONLY F-droid compliant build
         create("izzy") {
             dimension = "variant"
             buildConfigField("Boolean", "CAST_AVAILABLE", "false")
@@ -230,7 +249,7 @@ android {
 
     packaging {
         jniLibs {
-            useLegacyPackaging = false
+            useLegacyPackaging = true
             keepDebugSymbols +=
                 listOf(
                     "**/libandroidx.graphics.path.so",
@@ -350,6 +369,7 @@ dependencies {
 
     implementation(libs.coil)
     implementation(libs.coil.network.okhttp)
+    implementation(libs.browser)
 
     implementation(libs.ucrop)
 
@@ -381,7 +401,6 @@ dependencies {
     implementation(project(":innertube"))
     implementation(project(":kugou"))
     implementation(project(":lrclib"))
-    implementation(project(":kizzy"))
     implementation(project(":lastfm"))
     implementation(project(":betterlyrics"))
     implementation(project(":shazamkit"))
@@ -390,6 +409,9 @@ dependencies {
     implementation(libs.ktor.client.core)
     implementation(libs.ktor.client.cio)
     implementation(libs.ktor.client.content.negotiation)
+    implementation(libs.ktor.client.encoding)
+    implementation(libs.ktor.server.core)
+    implementation(libs.ktor.server.cio)
     implementation(libs.ktor.serialization.json)
 
     // Protobuf for message serialization (lite version for Android)
@@ -399,4 +421,16 @@ dependencies {
     coreLibraryDesugaring(libs.desugaring)
 
     implementation(libs.timber)
+
+    // yt-dlp 고음질 추출 (HIGH/VERY_HIGH itag 774)
+    implementation(libs.youtubedl.android)
+    implementation(libs.youtubedl.ffmpeg)
+
+    // HLahwani yt-dlp-android (QuickJS 기반 고속 추출기 - Python 불필요)
+    implementation(files("libs/yt-dlp-android-1.0.0.aar"))
+
+    testImplementation(libs.junit)
+    testImplementation(libs.robolectric)
+    testImplementation(libs.androidx.test.core)
+    testImplementation(libs.ktor.client.mock)
 }

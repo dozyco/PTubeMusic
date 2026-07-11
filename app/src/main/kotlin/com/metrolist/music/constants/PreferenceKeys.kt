@@ -34,6 +34,11 @@ enum class MiniPlayerBackgroundStyle {
 val DensityScaleKey = floatPreferencesKey("density_scale_factor")
 val CustomDensityScaleKey = floatPreferencesKey("custom_density_scale_value")
 
+// 차량(AAOS)에서 모바일 UI 전체 배율. 크게 하면 아이템이 커지고 화면당 표시 개수가
+// 줄어 이미지 동시 로딩 부담(렉)도 감소한다. 폴스타4 기본 1.5배.
+val AutomotiveUiScaleKey = floatPreferencesKey("automotiveUiScale")
+const val DEFAULT_AUTOMOTIVE_UI_SCALE = 1.5f
+
 enum class DensityScale(
     val value: Float,
     val label: String,
@@ -116,6 +121,7 @@ enum class AudioQuality {
 }
 
 val AudioOffload = booleanPreferencesKey("enableOffload")
+val AudioTrackPlaybackParamsKey = booleanPreferencesKey("audioTrackPlaybackParams")
 
 val VarispeedKey = booleanPreferencesKey("varispeed")
 
@@ -133,6 +139,11 @@ val LoudnessLevelKey = stringPreferencesKey("loudnessLevel")
 val BaseBoostDbKey = intPreferencesKey("baseBoostDb")
 const val DEFAULT_BASE_BOOST_DB = 0
 
+// 네비 안내/경고음 덕킹(차량이 음악 볼륨을 낮출 때) 동안 추가할 보상 부스트 (단위: dB, 0~20).
+// 차량 HAL 레벨 덕킹은 앱에서 막을 수 없으므로, 덕킹 이벤트 동안만 게인을 올려 상쇄한다.
+val DuckBoostDbKey = intPreferencesKey("duckBoostDb")
+const val DEFAULT_DUCK_BOOST_DB = 10
+
 enum class LoudnessLevel(
     val targetLufs: Float
 ) {
@@ -143,6 +154,7 @@ enum class LoudnessLevel(
 }
 
 val AutoLoadMoreKey = booleanPreferencesKey("autoLoadMore")
+val AutoRadioQueueKey = booleanPreferencesKey("autoRadioQueue")
 val DisableLoadMoreWhenRepeatAllKey = booleanPreferencesKey("disableLoadMoreWhenRepeatAll")
 val AutoDownloadOnLikeKey = booleanPreferencesKey("autoDownloadOnLike")
 val SimilarContent = booleanPreferencesKey("similarContent")
@@ -163,21 +175,33 @@ val PauseListenHistoryKey = booleanPreferencesKey("pauseListenHistory")
 val PauseSearchHistoryKey = booleanPreferencesKey("pauseSearchHistory")
 val DisableScreenshotKey = booleanPreferencesKey("disableScreenshot")
 
-val DiscordTokenKey = stringPreferencesKey("discordToken")
+// Stream sources — which innertube clients are used for stream resolution (Settings → Stream sources).
+val StreamSourceWebRemixKey = booleanPreferencesKey("streamSourceWebRemix")
+val StreamSourceTVHTML5Key = booleanPreferencesKey("streamSourceTVHTML5")
+val StreamSourceAndroidVRKey = booleanPreferencesKey("streamSourceAndroidVR")
+val StreamSourceVisionOSKey = booleanPreferencesKey("streamSourceVisionOS")
+val StreamSourceIOSKey = booleanPreferencesKey("streamSourceIOS")
+val StreamSourceWebCreatorKey = booleanPreferencesKey("streamSourceWebCreator")
+val StreamSourceAndroidCreatorKey = booleanPreferencesKey("streamSourceAndroidCreator")
+
+val EnableDiscordRPCKey = booleanPreferencesKey("discordRPCEnable")
 val DiscordInfoDismissedKey = booleanPreferencesKey("discordInfoDismissed")
 val DiscordUsernameKey = stringPreferencesKey("discordUsername")
 val DiscordNameKey = stringPreferencesKey("discordName")
-val EnableDiscordRPCKey = booleanPreferencesKey("discordRPCEnable")
-val DiscordUseDetailsKey = booleanPreferencesKey("discordUseDetails")
 val DiscordAvatarKey = stringPreferencesKey("discordAvatar")
-val DiscordStatusKey = stringPreferencesKey("discordStatus")
-val DiscordButton1TextKey = stringPreferencesKey("discordButton1Text")
-val DiscordButton1VisibleKey = booleanPreferencesKey("discordButton1Visible")
-val DiscordButton2TextKey = stringPreferencesKey("discordButton2Text")
-val DiscordButton2VisibleKey = booleanPreferencesKey("discordButton2Visible")
+
+val DiscordAdvancedModeKey = booleanPreferencesKey("discordAdvancedMode")
 val DiscordActivityTypeKey = stringPreferencesKey("discordActivityType")
 val DiscordActivityNameKey = stringPreferencesKey("discordActivityName")
-val DiscordAdvancedModeKey = booleanPreferencesKey("discordAdvancedMode")
+val DiscordStateTemplateKey = stringPreferencesKey("discordStateTemplate")
+val DiscordDetailsTemplateKey = stringPreferencesKey("discordDetailsTemplate")
+val DiscordButton1EnabledKey = booleanPreferencesKey("discordButton1Enabled")
+val DiscordButton1LabelKey = stringPreferencesKey("discordButton1Label")
+val DiscordButton1UrlKey = stringPreferencesKey("discordButton1Url")
+val DiscordButton2EnabledKey = booleanPreferencesKey("discordButton2Enabled")
+val DiscordButton2LabelKey = stringPreferencesKey("discordButton2Label")
+val DiscordButton2UrlKey = stringPreferencesKey("discordButton2Url")
+val DiscordUserStatusKey = stringPreferencesKey("discordUserStatus")
 
 // Google Cast
 val EnableGoogleCastKey = booleanPreferencesKey("enableGoogleCast")
@@ -376,42 +400,34 @@ enum class MyTopFilter {
     YEAR,
     ;
 
-    fun toTimeMillis(): Long =
+    fun toLocalDateTime(): LocalDateTime =
         when (this) {
             DAY -> {
                 LocalDateTime
                     .now()
                     .minusDays(1)
-                    .toInstant(ZoneOffset.UTC)
-                    .toEpochMilli()
             }
 
             WEEK -> {
                 LocalDateTime
                     .now()
                     .minusWeeks(1)
-                    .toInstant(ZoneOffset.UTC)
-                    .toEpochMilli()
             }
 
             MONTH -> {
                 LocalDateTime
                     .now()
                     .minusMonths(1)
-                    .toInstant(ZoneOffset.UTC)
-                    .toEpochMilli()
             }
 
             YEAR -> {
                 LocalDateTime
                     .now()
                     .minusMonths(12)
-                    .toInstant(ZoneOffset.UTC)
-                    .toEpochMilli()
             }
 
             ALL_TIME -> {
-                0
+                LocalDateTime.of(1970, 1, 1, 0, 0)
             }
         }
 }

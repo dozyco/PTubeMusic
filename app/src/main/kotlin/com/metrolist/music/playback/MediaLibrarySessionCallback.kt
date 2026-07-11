@@ -51,6 +51,8 @@ import com.metrolist.music.ui.screens.settings.AndroidAutoSection
 import com.metrolist.music.ui.screens.settings.serializeSections
 import com.metrolist.music.utils.dataStore
 import com.metrolist.music.utils.get
+import com.metrolist.music.utils.getArtistSeparator
+import com.metrolist.music.utils.joinToArtistString
 import com.metrolist.music.utils.reportException
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
@@ -403,9 +405,9 @@ constructor(
                         null
                     } ?: emptyList()
 
-                    // 3) 합치고 중복 제거 (id 기준)
+                    // 3) 음악 아티스트만 사용 (일반 채널 제외)
                     val artistList: List<ArtistItem> =
-                        (musicArtists + otherChannels).distinctBy { it.id }
+                        musicArtists.distinctBy { it.id }
 
                     LogBuffer.log("ARTIST 음악=${musicArtists.size}, 일반채널=${otherChannels.size}, 합계=${artistList.size}")
                     LogBuffer.log("ARTIST count=${artistList.size}, first=${artistList.firstOrNull()?.title}")
@@ -1092,9 +1094,14 @@ constructor(
         mediaId: String,
     ): ListenableFuture<LibraryResult<MediaItem>> =
         scope.future(Dispatchers.IO) {
-            database.song(mediaId).first()?.toMediaItem()?.let {
-                LibraryResult.ofItem(it, null)
-            } ?: LibraryResult.ofError(SessionError.ERROR_UNKNOWN)
+            try {
+                database.song(mediaId).first()?.toMediaItem()?.let {
+                    LibraryResult.ofItem(it, null)
+                } ?: LibraryResult.ofError(SessionError.ERROR_UNKNOWN)
+            } catch (e: Exception) {
+                reportException(e)
+                LibraryResult.ofError(SessionError.ERROR_UNKNOWN)
+            }
         }
 
     override fun onSearch(

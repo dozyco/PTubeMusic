@@ -103,36 +103,41 @@ class CipherWebView private constructor(
         usingHardcodedMode = isHardcoded
 
         val exports = buildList {
-            if (sigFuncName != null) {
-                val sigConstArgs = sigInfo.constantArgs
-                val preprocessFunc = sigInfo.preprocessFunc
-                val preprocessArgs = sigInfo.preprocessArgs
+            val sigJsExpr = sigInfo?.jsExpression
+            if (sigJsExpr != null) {
+                val expr = sigJsExpr.replace("INPUT", "sig")
+                Timber.tag(TAG).d("Sig: expression-based export: $expr")
+                add("window._cipherSigFunc = function(sig) { try { return $expr; } catch(e) { return null; } };")
+            } else if (sigFuncName != null) {
+                val sigConstArgs = sigInfo?.constantArgs
+                val preprocessFunc = sigInfo?.preprocessFunc
+                val preprocessArgs = sigInfo?.preprocessArgs
 
                 if (!sigConstArgs.isNullOrEmpty() && preprocessFunc != null && !preprocessArgs.isNullOrEmpty()) {
-                    // Full wrapper: JI(48, 1918, f1(1, 6528, sig))
                     val mainArgsStr = sigConstArgs.joinToString(", ")
                     val prepArgsStr = preprocessArgs.joinToString(", ")
                     Timber.tag(TAG).d("Sig function needs full wrapper:")
                     Timber.tag(TAG).d("  $sigFuncName($mainArgsStr, $preprocessFunc($prepArgsStr, sig))")
                     add("window._cipherSigFunc = function(sig) { return $sigFuncName($mainArgsStr, $preprocessFunc($prepArgsStr, sig)); };")
                 } else if (!sigConstArgs.isNullOrEmpty()) {
-                    // Wrapper with constant args only (no preprocessing)
                     val argsStr = sigConstArgs.joinToString(", ")
                     Timber.tag(TAG).d("Sig function needs wrapper with constant args: $argsStr")
                     add("window._cipherSigFunc = function(sig) { return $sigFuncName($argsStr, sig); };")
                 } else if (isHardcoded) {
-                    // For hardcoded mode without full args, we'll inject the function export after player.js loads
                     Timber.tag(TAG).d("Will export sig function $sigFuncName in hardcoded mode (legacy)")
                     add("window._cipherSigFunc = typeof $sigFuncName !== 'undefined' ? $sigFuncName : null;")
                 } else {
                     add("window._cipherSigFunc = typeof $sigFuncName !== 'undefined' ? $sigFuncName : null;")
                 }
             }
-            if (nFuncName != null) {
-                val nConstArgs = nFuncInfo.constantArgs
+            val nJsExpr = nFuncInfo?.jsExpression
+            if (nJsExpr != null) {
+                val expr = nJsExpr.replace("INPUT", "n")
+                Timber.tag(TAG).d("N: expression-based export: ${expr.take(80)}")
+                add("window._nTransformFunc = function(n) { try { return $expr; } catch(e) { return n; } };")
+            } else if (nFuncName != null) {
+                val nConstArgs = nFuncInfo?.constantArgs
                 if (!nConstArgs.isNullOrEmpty()) {
-                    // Generate wrapper function for n-functions that require constant args
-                    // e.g. GU(6, 6010, n) -> window._nTransformFunc = function(n) { return GU(6, 6010, n); };
                     val argsStr = nConstArgs.joinToString(", ")
                     Timber.tag(TAG).d("N-function needs wrapper with constant args: $argsStr")
                     add("window._nTransformFunc = function(n) { return $nFuncName($argsStr, n); };")
@@ -385,6 +390,61 @@ function discoverAndInit() {
     }
 
     CipherBridge.logDebug("Discovery complete:");
+    // ============================================================
+    // [정찰] SIG 함수 후보 탐색 - window에서 서명처럼 동작하는 함수 찾기
+    // ============================================================
+    try {
+        // 실제 YouTube 서명 길이의 테스트 문자열 (108자 영숫자+특수)
+        var sigTest = "AAOAOq0QJ8wRAIgXmPlOPSBkkUs1bYFYlJCfe29xx8j7vgpDL0QwbdV06sCIEzpWqMGkFR20CFOS21Tp7vjEMum37KtXJoOy1ABCDEFGHIJ";
+        var sigKeys = Object.getOwnPropertyNames(window);
+        var sigCandidates = [];
+        var sigTested = 0;
+
+        for (var si = 0; si < sigKeys.length; si++) {
+            try {
+                var sk = sigKeys[si];
+                if (sk.startsWith("webkit") || sk.startsWith("on") ||
+                    sk === "CipherBridge" || sk === "_cipherSigFunc" ||
+                    sk === "_nTransformFunc" || sk === "window" || sk === "self") {
+                    continue;
+                }
+                var sfn = window[sk];
+                if (typeof sfn !== 'function') continue;
+                // sig 함수는 보통 1개 인자(문자열)를 받음
+                if (sfn.length !== 1) continue;
+
+                sigTested++;
+                var sres = sfn(sigTest);
+                // sig 결과: 입력과 다르고, 비슷한 길이(±10), 영숫자/특수
+                if (typeof sres === 'string' && sres !== sigTest &&
+                    Math.abs(sres.length - sigTest.length) <= 15 &&
+                    sres.length >= 80) {
+                    sigCandidates.push({
+                        name: sk,
+                        resultPreview: sres.substring(0, 20),
+                        inLen: sigTest.length,
+                        outLen: sres.length
+                    });
+                }
+            } catch(e) {
+                // 많은 window 함수가 호출 시 예외 - 정상
+            }
+        }
+
+        CipherBridge.logDebug("=== SIG 정찰 결과 ===");
+        CipherBridge.logDebug("  테스트한 1-인자 함수: " + sigTested);
+        CipherBridge.logDebug("  SIG 후보 수: " + sigCandidates.length);
+        if (sigCandidates.length > 0) {
+            CipherBridge.logDebug("  후보들: " + JSON.stringify(sigCandidates.slice(0, 10)));
+        } else {
+            CipherBridge.logDebug("  SIG 후보 없음 - window에 직접 노출 안 됨 (헬퍼객체 내부일 가능성)");
+        }
+    } catch(e) {
+        CipherBridge.logDebug("SIG 정찰 실패: " + e);
+    }
+    // ============================================================
+    // [정찰 끝]
+    // ============================================================
     CipherBridge.logDebug("  sigFuncName=" + sigFuncName);
     CipherBridge.logDebug("  nFuncName=" + nFuncName);
     CipherBridge.logDebug("  info=" + info);

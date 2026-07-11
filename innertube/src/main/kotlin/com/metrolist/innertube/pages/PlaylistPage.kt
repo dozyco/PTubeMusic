@@ -30,10 +30,7 @@ data class PlaylistPage(
                 ?.splitBySeparator()
 
             return SongItem(
-                id = (renderer.playlistItemData?.videoId
-                    ?: renderer.overlay?.musicItemThumbnailOverlayRenderer?.content
-                        ?.musicPlayButtonRenderer?.playNavigationEndpoint?.watchEndpoint?.videoId)
-                    ?: return null,
+                id = renderer.videoId ?: return null,
                 title = renderer.flexColumns.firstOrNull()
                     ?.musicResponsiveListItemFlexColumnRenderer?.text
                     ?.runs?.firstOrNull()?.text ?: return null,
@@ -56,7 +53,7 @@ data class PlaylistPage(
                     it.musicInlineBadgeRenderer?.icon?.iconType == "MUSIC_EXPLICIT_BADGE"
                 } != null,
                 endpoint = renderer.overlay?.musicItemThumbnailOverlayRenderer?.content?.musicPlayButtonRenderer?.playNavigationEndpoint?.watchEndpoint,
-                setVideoId = renderer.playlistItemData?.playlistSetVideoId,
+                setVideoId = renderer.playlistSetVideoId,
                 libraryAddToken = libraryTokens.addToken,
                 libraryRemoveToken = libraryTokens.removeToken,
                 isEpisode = renderer.isEpisode
