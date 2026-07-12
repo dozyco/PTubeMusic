@@ -1027,26 +1027,32 @@ class MainActivity : ComponentActivity() {
                                             )
                                         },
                                         actions = {
-                                            if (showHistoryButton) {
-                                                IconButton(onClick = { navController.navigate("history") }) {
+                                            // 차량(AAOS)에서 UI를 키우면 상단바 아이콘이 커져 폭이 부족해지고,
+                                            // 마지막(오른쪽 끝)에 있는 계정/로그인 아이콘이 화면 밖으로 잘린다.
+                                            // 차량에서는 기록·통계·함께듣기를 숨기고 계정 아이콘만 남겨
+                                            // 로그인 버튼이 항상 보이도록 한다.
+                                            if (!isAutomotive) {
+                                                if (showHistoryButton) {
+                                                    IconButton(onClick = { navController.navigate("history") }) {
+                                                        Icon(
+                                                            painter = painterResource(R.drawable.history),
+                                                            contentDescription = stringResource(R.string.history),
+                                                        )
+                                                    }
+                                                }
+                                                IconButton(onClick = { navController.navigate("stats") }) {
                                                     Icon(
-                                                        painter = painterResource(R.drawable.history),
-                                                        contentDescription = stringResource(R.string.history),
+                                                        painter = painterResource(R.drawable.stats),
+                                                        contentDescription = stringResource(R.string.stats),
                                                     )
                                                 }
-                                            }
-                                            IconButton(onClick = { navController.navigate("stats") }) {
-                                                Icon(
-                                                    painter = painterResource(R.drawable.stats),
-                                                    contentDescription = stringResource(R.string.stats),
-                                                )
-                                            }
-                                            if (listenTogetherInTopBar) {
-                                                IconButton(onClick = { navController.navigate("listen_together_from_topbar") }) {
-                                                    Icon(
-                                                        painter = painterResource(R.drawable.group_outlined),
-                                                        contentDescription = stringResource(R.string.together),
-                                                    )
+                                                if (listenTogetherInTopBar) {
+                                                    IconButton(onClick = { navController.navigate("listen_together_from_topbar") }) {
+                                                        Icon(
+                                                            painter = painterResource(R.drawable.group_outlined),
+                                                            contentDescription = stringResource(R.string.together),
+                                                        )
+                                                    }
                                                 }
                                             }
                                             IconButton(onClick = { showAccountDialog = true }) {
