@@ -9,6 +9,7 @@ import android.app.Application
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
+import android.content.pm.PackageManager
 import android.os.Build
 import android.widget.Toast
 import androidx.datastore.preferences.core.edit
@@ -321,16 +322,20 @@ class App :
         val cacheSize = cachedCoilCacheSize ?: runBlocking {
             dataStore.data.map { it[MaxImageCacheSizeKey] ?: 512 }.first()
         }
+        // 차량(AAOS)은 가로로 넓은 화면에 이미지가 많이 깔려 스크롤 부하가 크다.
+        // crossfade(페이드인) 애니메이션을 끄면 이미지가 즉시 표시돼 스크롤 중 프레임 부담이 줄고,
+        // 메모리 캐시를 키우면 스크롤을 되돌릴 때 재디코딩이 줄어 렉이 완화된다.
+        val isAutomotive = packageManager.hasSystemFeature(PackageManager.FEATURE_AUTOMOTIVE)
         return ImageLoader
             .Builder(this)
             .apply {
-                crossfade(true)
+                crossfade(!isAutomotive)
                 allowHardware(Build.VERSION.SDK_INT >= Build.VERSION_CODES.P)
                 // Memory cache for fast image loading (prevents network requests on recomposition)
                 memoryCache {
                     MemoryCache
                         .Builder()
-                        .maxSizePercent(context, 0.15)
+                        .maxSizePercent(context, if (isAutomotive) 0.30 else 0.15)
                         .build()
                 }
                 if (cacheSize == 0) {
