@@ -21,6 +21,7 @@ import coil3.disk.directory
 import coil3.memory.MemoryCache
 import coil3.request.CachePolicy
 import coil3.request.allowHardware
+import coil3.request.bitmapConfig
 import coil3.request.crossfade
 import com.metrolist.innertube.YouTube
 import com.metrolist.innertube.models.ArtistConjunctions
@@ -331,6 +332,12 @@ class App :
             .apply {
                 crossfade(!isAutomotive)
                 allowHardware(Build.VERSION.SDK_INT >= Build.VERSION_CODES.P)
+                // 차량: RGB_565(픽셀당 2바이트)로 디코딩 → 기본 ARGB_8888(4바이트) 대비
+                // 비트맵 메모리·GPU 업로드 대역폭 절반. 앨범아트는 알파가 없어 화질 차이 미미하고
+                // 스크롤 중 디코딩 부하가 크게 줄어 렉이 완화된다.
+                if (isAutomotive) {
+                    bitmapConfig(android.graphics.Bitmap.Config.RGB_565)
+                }
                 // Memory cache for fast image loading (prevents network requests on recomposition)
                 memoryCache {
                     MemoryCache

@@ -657,16 +657,12 @@ class MainActivity : ComponentActivity() {
             val isAutomotive = remember {
                 packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_AUTOMOTIVE)
             }
-            val automotiveUiScale by rememberPreference(
-                com.metrolist.music.constants.AutomotiveUiScaleKey,
-                com.metrolist.music.constants.DEFAULT_AUTOMOTIVE_UI_SCALE,
-            )
 
-            val densityScale = remember(containerWidthDp, isAutomotive, automotiveUiScale) {
+            val densityScale = remember(containerWidthDp, isAutomotive) {
                 when {
-                    // 차량(AAOS): 시거리가 멀고 터치 정확도가 낮으므로 사용자가 설정한 배율로
-                    // 전체 UI를 키운다. 화면당 아이템 수가 줄어 렉(이미지 동시 로딩)도 완화.
-                    isAutomotive -> automotiveUiScale.coerceIn(1.0f, 2.0f)
+                    // 차량(AAOS): 폴스타4 와이드 화면에 맞춘 고정 배율. 사용자 조절 슬라이더는 제거
+                    // (실차 검증으로 1.5가 최적). 화면당 아이템 수가 줄어 렉(이미지 동시 로딩)도 완화.
+                    isAutomotive -> com.metrolist.music.constants.DEFAULT_AUTOMOTIVE_UI_SCALE
                     containerWidthDp >= 840.dp -> 1.25f
                     containerWidthDp >= 720.dp -> 1.15f
                     containerWidthDp >= 600.dp -> 1.1f
@@ -850,7 +846,9 @@ class MainActivity : ComponentActivity() {
                 val topAppBarScrollBehavior =
                     appBarScrollBehavior(
                         canScroll = {
-                            !inSearchScreen &&
+                            // 차량(AAOS): 상단바를 고정해 스크롤해도 계정/로그인 아이콘이 사라지지 않게 한다.
+                            !isAutomotive &&
+                                !inSearchScreen &&
                                 (playerBottomSheetState.isCollapsed || playerBottomSheetState.isDismissed)
                         },
                     )
