@@ -202,7 +202,15 @@ object YTPlayerUtils {
                 ?: musicVideoType.contains("LIVE", ignoreCase = true).takeIf { it },
             isUploaded = isUploadedTrack,
         )
-        val streamClients = fallbackStrategy.resolveClients(effectiveHints)
+        // 업스트림 전략(ContentAwareFallbackStrategy)이 반환한 순서에 WEB_REMIX(MAIN_CLIENT)가
+        // 1순위가 아니면, 로그인 프리미엄의 고음질(itag 774)을 못 받고 저음질 클라이언트로 떨어진다.
+        // MAIN_CLIENT를 맨 앞에 넣어 itag 774를 먼저 시도한다(우리 고음질 요구사항). 나머지는 폴백 유지.
+        val resolvedClients = fallbackStrategy.resolveClients(effectiveHints)
+        val streamClients = if (resolvedClients.firstOrNull() == MAIN_CLIENT) {
+            resolvedClients
+        } else {
+            listOf(MAIN_CLIENT) + resolvedClients.filter { it != MAIN_CLIENT }
+        }
 
         var bestFallbackFormat: PlayerResponse.StreamingData.Format? = null
         var bestFallbackUrl: String? = null
@@ -305,7 +313,7 @@ object YTPlayerUtils {
                 streamUrl = findUrlOrNull(format, videoId, responseToUse, skipNewPipe = wasOriginallyAgeRestricted)
 
                 if ((audioQuality == AudioQuality.HIGH || audioQuality == AudioQuality.VERY_HIGH)
-                    && clientIndex == -1   // MAIN_CLIENT(WEB_REMIX) 시도일 때만
+                    && client == MAIN_CLIENT   // MAIN_CLIENT(WEB_REMIX) 시도일 때만 (v13.6.1 루프 구조 대응)
                 ) {
                     val isHighFormat = format.itag == 774 || format.audioQuality == "AUDIO_QUALITY_HIGH"
                     // 일반 경로가 실패했거나 선택된 포맷이 고음질이 아닐 때만 yt-dlp 폴백.
