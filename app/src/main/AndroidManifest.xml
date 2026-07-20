@@ -178,23 +178,8 @@
                 android:value="true" />
         </activity>
 
-        <!-- Legacy launcher alias kept for upgrade compatibility.
-             Users upgrading from older builds may have this component
-             pinned as a home-screen icon. Removing it would leave a
-             dead icon, so we preserve it as a compatibility shim. -->
-        <activity-alias
-            android:name=".MainActivityAlias"
-            android:enabled="true"
-            android:exported="true"
-            android:icon="@mipmap/ic_launcher"
-            android:label="@string/app_name"
-            android:roundIcon="@mipmap/ic_launcher_round"
-            android:targetActivity=".MainActivity">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-        </activity-alias>
+        <!-- 업스트림 v13.6.1의 MainActivityAlias(런처 별칭)는 제거함:
+             PTubeMusic에는 원래 없던 컴포넌트라, 두면 홈에 중복 런처 아이콘이 생긴다. -->
 
         <activity
             android:name=".automotive.AutomotiveSettingsActivity"
