@@ -1294,6 +1294,9 @@ class MainActivity : ComponentActivity() {
                                     onItemClick = onRailItemClick,
                                     pureBlack = pureBlack,
                                     onSearchLongClick = onRailSearchLongClick,
+                                    // 차량 등 사이드바 모드: 로그인/계정 진입을 하단에 항상 노출
+                                    onAccountClick = { showAccountDialog = true },
+                                    accountImageUrl = accountImageUrl,
                                 )
                             }
                             Box(Modifier.weight(1f)) {

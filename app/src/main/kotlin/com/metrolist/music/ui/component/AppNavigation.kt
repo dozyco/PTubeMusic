@@ -8,6 +8,12 @@ package com.metrolist.music.ui.component
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.PressInteraction
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.draw.clip
+import coil3.compose.AsyncImage
+import androidx.compose.ui.unit.dp
+import com.metrolist.music.R
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
@@ -61,7 +67,11 @@ fun AppNavigationRail(
     onItemClick: (Screens, Boolean) -> Unit,
     modifier: Modifier = Modifier,
     pureBlack: Boolean = false,
-    onSearchLongClick: (() -> Unit)? = null
+    onSearchLongClick: (() -> Unit)? = null,
+    // 차량 등 사이드바 레이아웃에서 로그인/계정 진입을 항상 노출하기 위한 하단 고정 버튼.
+    // null이면 표시하지 않는다(휴대폰은 상단바의 계정 아이콘을 그대로 사용).
+    onAccountClick: (() -> Unit)? = null,
+    accountImageUrl: String? = null
 ) {
     val containerColor = if (pureBlack) Color.Black else MaterialTheme.colorScheme.surfaceContainer
     val haptics = LocalHapticFeedback.current
@@ -130,6 +140,30 @@ fun AppNavigationRail(
         }
 
         Spacer(modifier = Modifier.weight(1f))
+
+        // 하단 고정 계정/로그인 버튼 — 스크롤·상단바 상태와 무관하게 항상 보인다.
+        if (onAccountClick != null) {
+            NavigationRailItem(
+                selected = false,
+                onClick = onAccountClick,
+                icon = {
+                    if (accountImageUrl != null) {
+                        AsyncImage(
+                            model = accountImageUrl,
+                            contentDescription = stringResource(R.string.account),
+                            modifier = Modifier
+                                .size(24.dp)
+                                .clip(CircleShape),
+                        )
+                    } else {
+                        Icon(
+                            painter = painterResource(id = R.drawable.account),
+                            contentDescription = stringResource(R.string.account),
+                        )
+                    }
+                }
+            )
+        }
     }
 }
 
