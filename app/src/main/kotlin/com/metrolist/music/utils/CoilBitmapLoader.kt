@@ -22,6 +22,7 @@ import coil3.toBitmap
 import com.google.common.util.concurrent.ListenableFuture
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.guava.future
 import timber.log.Timber
 
@@ -59,34 +60,52 @@ class CoilBitmapLoader(
 
     override fun loadBitmap(uri: Uri): ListenableFuture<Bitmap> =
         scope.future(Dispatchers.IO) {
-            try {
-                val request =
-                    ImageRequest
-                        .Builder(context)
-                        .data(uri)
-                        .allowHardware(false)
-                        .build()
+            // 앨범아트 로딩은 일시적 네트워크 오류로 실패하는 경우가 있는데, 즉시 빈 이미지로
+            // 폴백하면 차량 재생 화면에 앨범아트가 비어 보인다. 짧은 백오프로 몇 번 재시도해
+            // 일시적 실패를 걸러낸 뒤에만 폴백한다.
+            repeat(MAX_ATTEMPTS) { attempt ->
+                try {
+                    val request =
+                        ImageRequest
+                            .Builder(context)
+                            .data(uri)
+                            .allowHardware(false)
+                            .build()
 
-                when (val result = context.imageLoader.execute(request)) {
-                    is ErrorResult -> {
-                        createFallbackBitmap()
-                    }
+                    when (val result = context.imageLoader.execute(request)) {
+                        is SuccessResult -> {
+                            try {
+                                return@future result.image.toBitmap().createIndependentCopy()
+                            } catch (e: Exception) {
+                                Timber.tag("CoilBitmapLoader").w(e, "Failed to convert image to bitmap")
+                                return@future createFallbackBitmap()
+                            }
+                        }
 
-                    is SuccessResult -> {
-                        try {
-                            val bitmap = result.image.toBitmap()
-                            bitmap.createIndependentCopy()
-                        } catch (e: Exception) {
-                            Timber.tag("CoilBitmapLoader").w(e, "Failed to convert image to bitmap")
-                            createFallbackBitmap()
+                        is ErrorResult -> {
+                            // 마지막 시도가 아니면 잠깐 쉬었다가 재시도 (지수 백오프)
+                            if (attempt < MAX_ATTEMPTS - 1) {
+                                Timber.tag("CoilBitmapLoader")
+                                    .d("Artwork load failed (attempt ${attempt + 1}/$MAX_ATTEMPTS), retrying: $uri")
+                                delay(RETRY_BASE_DELAY_MS * (attempt + 1))
+                            } else {
+                                Timber.tag("CoilBitmapLoader")
+                                    .w(result.throwable, "Artwork load failed after $MAX_ATTEMPTS attempts: $uri")
+                            }
                         }
                     }
+                } catch (e: Exception) {
+                    Timber.tag("CoilBitmapLoader").w(e, "Failed to load bitmap from uri (attempt ${attempt + 1})")
+                    if (attempt < MAX_ATTEMPTS - 1) delay(RETRY_BASE_DELAY_MS * (attempt + 1))
                 }
-            } catch (e: Exception) {
-                Timber.tag("CoilBitmapLoader").w(e, "Failed to load bitmap from uri")
-                createFallbackBitmap()
             }
+            createFallbackBitmap()
         }
+
+    companion object {
+        private const val MAX_ATTEMPTS = 3
+        private const val RETRY_BASE_DELAY_MS = 400L
+    }
 
     override fun loadBitmapFromMetadata(metadata: MediaMetadata): ListenableFuture<Bitmap>? {
         metadata.artworkData?.let { return decodeBitmap(it) }
