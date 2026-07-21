@@ -232,17 +232,38 @@ class App :
                 .map { it[VisitorDataKey] }
                 .distinctUntilChanged()
                 .collect { visitorData ->
-                    YouTube.visitorData = visitorData?.takeIf { it != "null" }
-                        ?: YouTube.visitorData().getOrNull()?.also { newVisitorData ->
-                            try {
-                                safeDataStoreEdit { settings ->
-                                    settings[VisitorDataKey] = newVisitorData
+                    val stored = visitorData?.takeIf { it != "null" }
+                    if (stored != null) {
+                        YouTube.visitorData = stored
+                        return@collect
+                    }
+                    // 저장된 visitorData가 없다(첫 설치/로그아웃 후). 네트워크로 발급받아야 하는데,
+                    // 이 호출이 첫 부팅 콜드 네트워크/일시적 throttle로 실패하면 세션 내내 null로 남아
+                    // PoToken 생성·재생이 계속 실패했다(앱을 다시 켜야 복구). → 성공할 때까지 재시도한다.
+                    launch(Dispatchers.IO) {
+                        var attempt = 0
+                        while (YouTube.visitorData == null) {
+                            val fetched = runCatching { YouTube.visitorData().getOrNull() }.getOrNull()
+                            if (fetched != null) {
+                                YouTube.visitorData = fetched
+                                try {
+                                    safeDataStoreEdit { settings -> settings[VisitorDataKey] = fetched }
+                                } catch (e: IOException) {
+                                    Timber.e(e, "DataStore write failed for visitor data")
+                                    reportException(e)
                                 }
-                            } catch (e: IOException) {
-                                Timber.e(e, "DataStore write failed for visitor data")
-                                reportException(e)
+                                Timber.tag("App").d("visitorData 발급 성공 (시도 ${attempt + 1})")
+                                // 세션이 준비됐으니 PoToken도 미리 데워둔다(첫 재생 지연 감소)
+                                runCatching { YTPlayerUtils.prewarmPoToken() }
+                                break
                             }
+                            attempt++
+                            // 지수 백오프: 2s, 4s, 8s ... 최대 30s. 성공할 때까지 계속 시도.
+                            val delayMs = minOf(2000L * (1L shl minOf(attempt, 4)), 30_000L)
+                            Timber.tag("App").d("visitorData 발급 실패 → ${delayMs}ms 후 재시도 (시도 $attempt)")
+                            delay(delayMs)
                         }
+                    }
                 }
         }
 
