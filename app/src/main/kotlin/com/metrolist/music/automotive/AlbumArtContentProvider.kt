@@ -35,6 +35,11 @@ class AlbumArtContentProvider : ContentProvider() {
     companion object {
         // content:// URI 와 원본 웹 URL 의 매핑을 저장하는 정적 맵
         private val uriMap = mutableMapOf<Uri, Uri>()
+        // 고해상도 변환 URL 이 실패할 때 폴백할 원본 URL 매핑
+        private val origMap = mutableMapOf<Uri, Uri>()
+
+        private const val UA =
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:140.0) Gecko/20100101 Firefox/140.0"
 
         /**
          * 웹 이미지 URL 을 content:// URI 로 변환하고 매핑을 저장한다.
@@ -64,7 +69,56 @@ class AlbumArtContentProvider : ContentProvider() {
                 .path(path)
                 .build()
             uriMap[contentUri] = hiResUri  // 고해상도 URL 로 매핑 저장
+            origMap[contentUri] = uri      // 폴백용 원본 URL 저장
             return contentUri
+        }
+
+        /**
+         * 이미지 바이트를 견고하게 다운로드한다.
+         * - User-Agent 지정(구글 CDN throttle/거부 완화)
+         * - 리다이렉트 추종
+         * - 짧은 백오프로 재시도(순간 네트워크 실패 흡수)
+         * 실패 시 null.
+         */
+        private fun downloadBytes(urlStr: String, attempts: Int = 3): ByteArray? {
+            repeat(attempts) { i ->
+                try {
+                    var current = urlStr
+                    var redirects = 0
+                    while (redirects < 5) {
+                        val conn = (java.net.URL(current).openConnection() as java.net.HttpURLConnection).apply {
+                            connectTimeout = 10_000
+                            readTimeout = 10_000
+                            instanceFollowRedirects = true
+                            setRequestProperty("User-Agent", UA)
+                            setRequestProperty("Accept", "image/*,*/*")
+                        }
+                        val code = conn.responseCode
+                        if (code in 300..399) {
+                            val loc = conn.getHeaderField("Location")
+                            conn.disconnect()
+                            if (loc.isNullOrBlank()) break
+                            current = if (loc.startsWith("http")) loc
+                            else java.net.URL(java.net.URL(current), loc).toString()
+                            redirects++
+                            continue
+                        }
+                        if (code !in 200..299) {
+                            conn.disconnect()
+                            android.util.Log.w("PTUBE_ART", "HTTP $code for $current")
+                            break
+                        }
+                        val bytes = conn.inputStream.use { it.readBytes() }
+                        conn.disconnect()
+                        if (bytes.isNotEmpty()) return bytes
+                        break
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.w("PTUBE_ART", "download 실패(시도 ${i + 1}/$attempts): ${e.message}")
+                }
+                if (i < attempts - 1) Thread.sleep(400L * (i + 1))
+            }
+            return null
         }
 
         // ARTIST 카드 등 정사각형으로 꽉 채워야 하는 경우용.
@@ -95,13 +149,17 @@ class AlbumArtContentProvider : ContentProvider() {
 
         if (!file.exists()) {
             try {
-                // 1. 원본 다운로드 (바이트)
-                val url = java.net.URL(remoteUri.toString())
-                val connection = url.openConnection() as java.net.HttpURLConnection
-                connection.connectTimeout = 10_000
-                connection.readTimeout = 10_000
-                val bytes = connection.inputStream.use { it.readBytes() }
-                connection.disconnect()
+                // 1. 견고한 다운로드: 고해상도 URL 재시도 → 실패 시 원본 URL 폴백.
+                //    (차량 재생 화면 앨범아트가 간헐적으로 실패하던 문제 대응)
+                var bytes = downloadBytes(remoteUri.toString())
+                if (bytes == null) {
+                    val fallback = origMap[uri]?.toString()
+                    if (fallback != null && fallback != remoteUri.toString()) {
+                        android.util.Log.d("PTUBE_ART", "고해상도 실패 → 원본 URL 폴백: $fallback")
+                        bytes = downloadBytes(fallback)
+                    }
+                }
+                if (bytes == null) throw FileNotFoundException("Download failed after retries: $remoteUri")
 
                 // 2. 비트맵으로 디코딩
                 val decoded = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
