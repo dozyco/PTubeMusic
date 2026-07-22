@@ -26,6 +26,8 @@ import com.metrolist.music.utils.potoken.PoTokenResult
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -47,8 +49,15 @@ object YTPlayerUtils {
         java.util.concurrent.ConcurrentHashMap<String, Boolean>(),
     )
 
+    // "원본 URL이 n-변환 없이 유효" 판정이 연속 성공한 횟수. 이 판정은 곡이 아니라 player.js
+    // 세대에 따라 일정하므로, 스트릭이 차면 곡마다 하던 HEAD 검증을 생략한다(왕복 1회 절약).
+    // 403이 나거나 cipher 설정이 갱신되면 리셋해 다음 곡부터 다시 검증한다.
+    private val consecutiveValidOriginalUrls = java.util.concurrent.atomic.AtomicInteger(0)
+    private const val TRUSTED_VALID_STREAK = 3
+
     fun markWebRemixFailed(videoId: String) {
         webRemixFailedIds.add(videoId)
+        consecutiveValidOriginalUrls.set(0)
     }
 
     /**
@@ -58,6 +67,7 @@ object YTPlayerUtils {
      */
     fun clearWebRemixFailures() {
         webRemixFailedIds.clear()
+        consecutiveValidOriginalUrls.set(0)
     }
 
     // Fire-and-forget scope for the cipher config self-heal triggered when a cipher client fails
@@ -134,24 +144,29 @@ object YTPlayerUtils {
         val isLoggedIn = YouTube.cookie != null
         Timber.tag(TAG).d("Authentication status: ${if (isLoggedIn) "LOGGED_IN" else "ANONYMOUS"}")
 
-        // Get signature timestamp (same as before for normal content)
-        val signatureTimestamp = getSignatureTimestampOrNull(videoId)
-        Timber.tag(logTag).d("Signature timestamp: ${signatureTimestamp.timestamp}")
-
-        // Generate PoToken
-        var poToken: PoTokenResult? = null
+        // 서명 타임스탬프 조회와 PoToken 생성은 서로 독립 — 병렬로 실행해 로딩을 줄인다.
         val sessionId = YouTube.visitorData
-        if (MAIN_CLIENT.useWebPoTokens && sessionId != null) {
-            Timber.tag(logTag).d("Generating PoToken for WEB_REMIX with sessionId")
-            try {
-                poToken = poTokenGenerator.getWebClientPoToken(videoId, sessionId)
-                if (poToken != null) {
-                    Timber.tag(logTag).d("PoToken generated successfully")
+        val (signatureTimestamp, poToken) = coroutineScope {
+            val stsDeferred = async(Dispatchers.IO) { getSignatureTimestampOrNull(videoId) }
+            val poTokenDeferred = async(Dispatchers.IO) {
+                if (MAIN_CLIENT.useWebPoTokens && sessionId != null) {
+                    Timber.tag(logTag).d("Generating PoToken for WEB_REMIX with sessionId")
+                    try {
+                        poTokenGenerator.getWebClientPoToken(videoId, sessionId)
+                            ?.also { Timber.tag(logTag).d("PoToken generated successfully") }
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        Timber.tag(logTag).e(e, "PoToken generation failed: ${e.message}")
+                        null
+                    }
+                } else {
+                    null
                 }
-            } catch (e: Exception) {
-                Timber.tag(logTag).e(e, "PoToken generation failed: ${e.message}")
             }
+            stsDeferred.await() to poTokenDeferred.await()
         }
+        Timber.tag(logTag).d("Signature timestamp: ${signatureTimestamp.timestamp}")
 
         // Try WEB_REMIX with signature timestamp and poToken (same as before)
         Timber.tag(logTag).d("Attempting to get player response using MAIN_CLIENT: ${MAIN_CLIENT.clientName}")
@@ -279,15 +294,10 @@ object YTPlayerUtils {
                 videoDetails = videoDetails ?: streamPlayerResponse.videoDetails
                 playbackTracking = playbackTracking ?: streamPlayerResponse.playbackTracking
 
-                // Skip NewPipe for age-restricted content (NewPipe doesn't use our auth)
-                val responseToUse = if (wasOriginallyAgeRestricted) {
-                    Timber.tag(logTag).d("Skipping NewPipe for age-restricted content")
-                    streamPlayerResponse
-                } else {
-                    // Try to get streams using newPipePlayer method
-                    val newPipeResponse = YouTube.newPipePlayer(videoId, streamPlayerResponse)
-                    newPipeResponse ?: streamPlayerResponse
-                }
+                // NewPipe 풀 추출(StreamInfo.getInfo — watch 페이지+player 왕복 수회, 곡당 1~3초)을
+                // 여기서 매곡 실행하지 않는다. findUrlOrNull()이 이 응답의 signatureCipher를
+                // 로컬(캐시된 player.js)로 해독하고, 실패하면 그 안에서 StreamInfo를 최후 폴백으로 쓴다.
+                val responseToUse = streamPlayerResponse
 
                 if (audioConfig == null) {
                     audioConfig = responseToUse.playerConfig?.audioConfig
@@ -391,10 +401,21 @@ object YTPlayerUtils {
                     // 로그인 + sts + PoToken으로 받은 WEB_REMIX URL은 대개 그대로 유효하며,
                     // 잘못 계산된 n-변환이 오히려 403을 유발한다(2026-07 실측).
                     // 원본 URL이 이미 유효하면 n-변환을 건너뛴다.
-                    if (validateStatus(streamUrl, currentClient.userAgent)) {
+                    //
+                    // 스트릭이 차 있으면(연속 TRUSTED_VALID_STREAK곡 유효) HEAD 검증 자체를 생략하고
+                    // 바로 재생으로 넘긴다. WEB_REMIX 한정 — 판단이 틀려도 ExoPlayer의 403 →
+                    // markWebRemixFailed 복구 경로가 받아주며, 그때 스트릭이 리셋된다.
+                    val trustOriginalUrl = currentClient == MAIN_CLIENT &&
+                        consecutiveValidOriginalUrls.get() >= TRUSTED_VALID_STREAK
+                    if (trustOriginalUrl) {
+                        Timber.tag(TAG).d("Skipping HEAD validation (valid-URL streak=${consecutiveValidOriginalUrls.get()})")
+                        streamAlreadyValidated = true
+                    } else if (validateStatus(streamUrl, currentClient.userAgent)) {
                         Timber.tag(TAG).d("Original URL already valid — skipping n-transform")
+                        if (currentClient == MAIN_CLIENT) consecutiveValidOriginalUrls.incrementAndGet()
                         streamAlreadyValidated = true
                     } else try {
+                        if (currentClient == MAIN_CLIENT) consecutiveValidOriginalUrls.set(0)
                         Timber.tag(TAG).d("Applying n-transform to stream URL...")
                         Timber.tag(TAG).d("  Original URL length: ${streamUrl.length}")
                         Timber.tag(TAG).d("  Original URL preview: ${streamUrl.take(100)}...")
@@ -759,17 +780,24 @@ object YTPlayerUtils {
         // independently fetched player can be a DIFFERENT generation, and a sig minted for one
         // player but deciphered by another 403s on the CDN. NewPipe is kept for age-restriction
         // detection and as the STS source only when the cipher player fetch fails.
-        val cipherSts = try {
-            CipherDeobfuscator.signatureTimestamp()
-                ?.also { Timber.tag(logTag).d("Signature timestamp from cipher player: $it") }
-        } catch (e: kotlinx.coroutines.CancellationException) {
-            throw e // cooperative cancellation: don't swallow, let the playback coroutine unwind
-        } catch (e: Exception) {
-            Timber.tag(logTag).e(e, "Cipher player STS fetch failed")
-            null
+        // 두 STS 조회는 서로 독립 — 병렬로 실행해 로딩을 줄인다.
+        val (cipherSts, result) = coroutineScope {
+            val cipherDeferred = async(Dispatchers.IO) {
+                try {
+                    CipherDeobfuscator.signatureTimestamp()
+                        ?.also { Timber.tag(logTag).d("Signature timestamp from cipher player: $it") }
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e // cooperative cancellation: don't swallow, let the playback coroutine unwind
+                } catch (e: Exception) {
+                    Timber.tag(logTag).e(e, "Cipher player STS fetch failed")
+                    null
+                }
+            }
+            val newPipeDeferred = async(Dispatchers.IO) {
+                NewPipeExtractor.getSignatureTimestamp(videoId)
+            }
+            cipherDeferred.await() to newPipeDeferred.await()
         }
-
-        val result = NewPipeExtractor.getSignatureTimestamp(videoId)
         return result.fold(
             onSuccess = { timestamp ->
                 val chosen = cipherSts ?: timestamp
