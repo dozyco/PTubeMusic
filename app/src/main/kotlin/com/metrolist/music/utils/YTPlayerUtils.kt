@@ -205,11 +205,16 @@ object YTPlayerUtils {
         // 업스트림 전략(ContentAwareFallbackStrategy)이 반환한 순서에 WEB_REMIX(MAIN_CLIENT)가
         // 1순위가 아니면, 로그인 프리미엄의 고음질(itag 774)을 못 받고 저음질 클라이언트로 떨어진다.
         // MAIN_CLIENT를 맨 앞에 넣어 itag 774를 먼저 시도한다(우리 고음질 요구사항). 나머지는 폴백 유지.
+        //
+        // 단, 이 videoId가 이미 WEB_REMIX에서 403난 적이 있으면(webRemixFailedIds) MAIN_CLIENT를
+        // 앞에 넣지 않는다. 넣으면 재생 재시도마다 또 WEB_REMIX를 먼저 시도→또 403→재해석 루프가
+        // 돌아 로딩이 크게 느려진다. 이 경우엔 전략이 준 폴백 순서를 그대로 써서 바로 폴백한다.
         val resolvedClients = fallbackStrategy.resolveClients(effectiveHints)
-        val streamClients = if (resolvedClients.firstOrNull() == MAIN_CLIENT) {
-            resolvedClients
-        } else {
-            listOf(MAIN_CLIENT) + resolvedClients.filter { it != MAIN_CLIENT }
+        val webRemixAlreadyFailed = webRemixFailedIds.contains(videoId)
+        val streamClients = when {
+            webRemixAlreadyFailed -> resolvedClients.filter { it != MAIN_CLIENT }
+            resolvedClients.firstOrNull() == MAIN_CLIENT -> resolvedClients
+            else -> listOf(MAIN_CLIENT) + resolvedClients.filter { it != MAIN_CLIENT }
         }
 
         var bestFallbackFormat: PlayerResponse.StreamingData.Format? = null
