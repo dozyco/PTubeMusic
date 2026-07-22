@@ -74,21 +74,22 @@ class AlbumArtContentProvider : ContentProvider() {
         }
 
         /**
-         * 이미지 바이트를 견고하게 다운로드한다.
+         * 이미지 바이트를 다운로드한다.
          * - User-Agent 지정(구글 CDN throttle/거부 완화)
          * - 리다이렉트 추종
-         * - 짧은 백오프로 재시도(순간 네트워크 실패 흡수)
-         * 실패 시 null.
+         * openFile 은 목록의 아이템마다 호출되고 차량이 이를 기다리므로, 여기서 오래 블로킹하면
+         * 로딩 전체가 느려진다. 그래서 재시도 없이 빠른 타임아웃으로 1회만 시도하고 실패 시 null.
+         * (간헐 실패 대응은 재시도가 아니라 UA·리다이렉트·상위에서의 원본 URL 폴백으로 처리)
          */
-        private fun downloadBytes(urlStr: String, attempts: Int = 3): ByteArray? {
+        private fun downloadBytes(urlStr: String, attempts: Int = 1): ByteArray? {
             repeat(attempts) { i ->
                 try {
                     var current = urlStr
                     var redirects = 0
                     while (redirects < 5) {
                         val conn = (java.net.URL(current).openConnection() as java.net.HttpURLConnection).apply {
-                            connectTimeout = 10_000
-                            readTimeout = 10_000
+                            connectTimeout = 6_000
+                            readTimeout = 6_000
                             instanceFollowRedirects = true
                             setRequestProperty("User-Agent", UA)
                             setRequestProperty("Accept", "image/*,*/*")
@@ -116,7 +117,7 @@ class AlbumArtContentProvider : ContentProvider() {
                 } catch (e: Exception) {
                     android.util.Log.w("PTUBE_ART", "download 실패(시도 ${i + 1}/$attempts): ${e.message}")
                 }
-                if (i < attempts - 1) Thread.sleep(400L * (i + 1))
+                if (i < attempts - 1) Thread.sleep(300L)
             }
             return null
         }
