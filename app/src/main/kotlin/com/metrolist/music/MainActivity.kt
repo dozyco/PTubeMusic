@@ -94,8 +94,11 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.offset
+import kotlin.math.roundToInt
 import androidx.compose.ui.util.fastAny
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -1229,6 +1232,22 @@ class MainActivity : ComponentActivity() {
                                             state = playerBottomSheetState,
                                             navController = navController,
                                             pureBlack = pureBlack,
+                                            // 레일(사이드바) 모드: 시트가 접혀 있을 때 fillMaxSize+translationY 구조상
+                                            // 하단 전체 폭이 시트의 히트 영역이 되어 레일 하단 계정 버튼의 터치를
+                                            // 가로챈다. 접힘 상태에서는 레일 폭만큼 오른쪽에서 시작시키고, 펼침
+                                            // 진행도에 따라 전체 폭으로 넓힌다. (layout 단계에서 progress를 읽어
+                                            // 리컴포지션 없이 재배치만 일어난다)
+                                            modifier =
+                                                Modifier.layout { measurable, constraints ->
+                                                    val railWidthPx = 80.dp.toPx() // M3 NavigationRail 기본 폭
+                                                    val progress = playerBottomSheetState.progress.coerceIn(0f, 1f)
+                                                    val inset = (railWidthPx * (1f - progress)).roundToInt()
+                                                    val placeable =
+                                                        measurable.measure(constraints.offset(horizontal = -inset))
+                                                    layout(placeable.width + inset, placeable.height) {
+                                                        placeable.place(inset, 0)
+                                                    }
+                                                },
                                         )
                                     }
                                 }
