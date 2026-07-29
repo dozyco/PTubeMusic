@@ -328,6 +328,11 @@ function discoverAndInit() {
                     var fn = window[key];
                     if (typeof fn !== 'function') continue;
 
+                    // 브라우저 내장 함수 제외 — eval/setTimeout/setInterval/fetch 등에 테스트
+                    // 문자열을 넘기면 문자열이 코드로 실행돼(특히 setInterval은 무한 반복)
+                    // ReferenceError 폭주로 렌더러가 뻗는다. player.js 함수는 소스가 보인다.
+                    if (String(fn).indexOf('[native code]') !== -1) { skipped++; continue; }
+
                     if (fn.length !== 1) continue;
 
                     tested++;
@@ -384,6 +389,8 @@ function discoverAndInit() {
                 }
                 var sfn = window[sk];
                 if (typeof sfn !== 'function') continue;
+                // 브라우저 내장 함수 제외 (위 N-함수 루프와 동일한 이유)
+                if (String(sfn).indexOf('[native code]') !== -1) continue;
                 // sig 함수는 보통 1개 인자(문자열)를 받음
                 if (sfn.length !== 1) continue;
 
