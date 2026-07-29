@@ -559,6 +559,48 @@ object YTPlayerUtils {
             streamUserAgent = bestFallbackUserAgent
         }
 
+        // ── 최후 yt-dlp 폴백 ──────────────────────────────────────────────
+        // 모든 클라이언트가 스트림 확보에 실패했을 때(응답 없음/재생불가/URL 해독 실패)
+        // 포기하기 전에 yt-dlp 계열 추출기로 마지막 시도를 한다. yt-dlp는 자체 추출
+        // 경로를 쓰므로 player.js 갱신 직후처럼 앱 해독기가 일제히 실패하는 시기에도
+        // 살아 있는 경우가 많다. 실패해도 기존과 동일하게 아래에서 예외로 떨어진다.
+        // (FormatEntity 저장이 contentLength 를 요구하므로 포맷 메타데이터가 있을 때만 채택)
+        if (streamUrl == null || format == null || streamPlayerResponse?.playabilityStatus?.status != "OK") {
+            Timber.tag(TAG).w("모든 클라이언트 실패 → 최후 yt-dlp 폴백 시도: videoId=$videoId")
+            val referenceResponse = streamPlayerResponse ?: mainPlayerResponse
+            val adaptiveFormats = referenceResponse?.streamingData?.adaptiveFormats
+            if (!adaptiveFormats.isNullOrEmpty()) {
+                val droidResult = YtdlpDroidExtractor.getAudioStream(videoId)
+                var lastResortUrl = droidResult?.url
+                var lastResortFormat = droidResult?.itag
+                    ?.let { droidItag -> adaptiveFormats.firstOrNull { it.itag == droidItag } }
+                if (lastResortUrl == null || lastResortFormat?.contentLength == null) {
+                    val bestAudio = adaptiveFormats
+                        .filter { it.isAudio && it.contentLength != null }
+                        .maxByOrNull { it.bitrate }
+                    if (lastResortUrl == null && bestAudio != null) {
+                        lastResortUrl = YtdlpStreamExtractor.getStreamUrl(videoId, itag = bestAudio.itag)
+                    }
+                    if (lastResortFormat?.contentLength == null) {
+                        lastResortFormat = bestAudio
+                    }
+                }
+                if (lastResortUrl != null && lastResortFormat?.contentLength != null) {
+                    Timber.tag(TAG).i("최후 yt-dlp 폴백 채택: videoId=$videoId, itag=${lastResortFormat.itag}, bitrate=${lastResortFormat.bitrate}")
+                    format = lastResortFormat
+                    streamUrl = lastResortUrl
+                    streamUserAgent = droidResult?.userAgent
+                    streamExpiresInSeconds = referenceResponse.streamingData?.expiresInSeconds ?: 21540
+                    streamPlayerResponse = referenceResponse
+                    successClient = "ytdlp"
+                } else {
+                    Timber.tag(TAG).w("최후 yt-dlp 폴백도 실패 (url=${lastResortUrl != null}, format=${lastResortFormat != null})")
+                }
+            } else {
+                Timber.tag(TAG).w("최후 yt-dlp 폴백 불가: 포맷 메타데이터 없음")
+            }
+        }
+
         if (streamPlayerResponse == null) {
             Timber.tag(logTag).e("Bad stream player response - all clients failed")
             if (isUploadedTrack) {
@@ -567,7 +609,9 @@ object YTPlayerUtils {
             throw Exception("Bad stream player response")
         }
 
-        if (streamPlayerResponse.playabilityStatus.status != "OK") {
+        // yt-dlp 최후 폴백이 채택된 경우엔 참조 응답의 재생불가 상태를 무시한다
+        // (yt-dlp 가 자체 경로로 유효한 스트림을 확보했으므로)
+        if (streamPlayerResponse.playabilityStatus.status != "OK" && successClient != "ytdlp") {
             val errorReason = streamPlayerResponse.playabilityStatus.reason
             // YouTube often surfaces generic reasons (e.g. "error 2000") for restricted or
             // unavailable streams; Metrolist cannot recover those without official playback.
