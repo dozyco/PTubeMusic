@@ -389,22 +389,7 @@ fun AboutScreen(
                 Spacer(Modifier.height(24.dp))
                 
                 DeveloperSocials(uriHandler)
-                
-                Spacer(Modifier.height(16.dp))
-                
-                Button(
-                    onClick = { uriHandler.openUri("https://buymeacoffee.com/mostafaalagamy") },
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = CircleShape,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.primary,
-                        contentColor = MaterialTheme.colorScheme.onPrimary
-                    )
-                ) {
-                    Icon(painterResource(R.drawable.buymeacoffee), contentDescription = null, modifier = Modifier.size(20.dp))
-                    Spacer(Modifier.width(12.dp))
-                    Text(stringResource(R.string.buy_mo_a_coffee), fontWeight = FontWeight.ExtraBold, fontSize = 16.sp)
-                }
+                // 후원(Buy me a coffee) 버튼은 PTubeMusic 포크에서 제거함
             }
         }
 
@@ -443,23 +428,7 @@ fun AboutScreen(
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            if (contributor.sponsorUrl != null) {
-                                Surface(
-                                    onClick = { uriHandler.openUri(contributor.sponsorUrl) },
-                                    shape = CircleShape,
-                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
-                                    modifier = Modifier.size(36.dp)
-                                ) {
-                                    Box(contentAlignment = Alignment.Center) {
-                                        Icon(
-                                            painter = painterResource(R.drawable.buymeacoffee),
-                                            contentDescription = null,
-                                            modifier = Modifier.size(20.dp),
-                                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
-                                }
-                            }
+                            // 후원 아이콘은 PTubeMusic 포크에서 제거함
                             Icon(
                                 painter = painterResource(R.drawable.github),
                                 contentDescription = null,
