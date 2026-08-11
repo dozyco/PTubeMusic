@@ -23,7 +23,9 @@ fun String.resize(
         var h = height
         if (w != null && h == null) h = (w / W) * H
         if (w == null && h != null) w = (h / H) * W
-        return "${split("=w")[0]}=w$w-h$h-p-l90-rj"
+        // -rw: JPEG(-rj) 대신 WebP 응답 — 같은 품질(l90)에서 전송량이 25~35% 작아
+        // 목록 썸네일 로딩이 빨라진다 (특히 차량 LTE).
+        return "${split("=w")[0]}=w$w-h$h-p-l90-rw"
     }
     if (this matches "https://yt3\\.ggpht\\.com/.*=s(\\d+)".toRegex()) {
         return "$this-s${width ?: height}"

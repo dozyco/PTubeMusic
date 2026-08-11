@@ -70,6 +70,7 @@ import androidx.media3.common.Player
 import coil3.compose.AsyncImage
 import coil3.request.CachePolicy
 import coil3.request.ImageRequest
+import coil3.request.bitmapConfig
 import com.metrolist.music.LocalListenTogetherManager
 import com.metrolist.music.LocalPlayerConnection
 import com.metrolist.music.R
@@ -630,6 +631,9 @@ private fun ThumbnailImage(
         AsyncImage(
             model = ImageRequest.Builder(LocalContext.current)
                 .data(artworkUri)
+                // 차량 전역 RGB_565(렉 완화) 예외: 플레이어 큰 아트만 원화질로 디코딩.
+                // 565는 큰 이미지에서 그라데이션 밴딩이 체감된다. 목록 썸네일은 565 유지.
+                .bitmapConfig(android.graphics.Bitmap.Config.ARGB_8888)
                 .memoryCachePolicy(CachePolicy.ENABLED)
                 .diskCachePolicy(CachePolicy.ENABLED)
                 .networkCachePolicy(CachePolicy.ENABLED)
