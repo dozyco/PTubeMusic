@@ -44,19 +44,22 @@ class AlbumArtContentProvider : ContentProvider() {
         /**
          * 웹 이미지 URL 을 content:// URI 로 변환하고 매핑을 저장한다.
          * 차량 시스템에는 이 content:// URI 를 넘긴다.
+         * [size]: 요청 해상도. 지금 재생 중 큰 아트는 1080, 브라우즈 목록 카드는 544 권장
+         * (목록까지 1080을 받으면 전송량이 4배라 차량 목록 로딩이 느려진다).
+         * -rw: WebP 응답 — 같은 품질에서 JPEG 대비 전송량 25~35% 감소.
          */
-        fun mapUri(uri: Uri): Uri {
-            // 1. URL 의 사이즈 부분을 고해상도로 교체 (=w120-h120 → =w544-h544)
+        fun mapUri(uri: Uri, size: Int = 1080): Uri {
+            // 1. URL 의 사이즈 부분을 요청 해상도로 교체
             // YouTube/Google CDN URL 패턴: ...=w{숫자}-h{숫자}[-기타옵션]
             val originalUrl = uri.toString()
             val hiResUrl = originalUrl
                 .replace(
                     Regex("=w\\d+-h\\d+(-[^=&]*)?"),
-                    "=w1080-h1080-l90"
+                    "=w$size-h$size-l90-rw"
                 )
                 .replace(
                     Regex("=s\\d+(-[^=&]*)?"),
-                    "=s1080-l90"
+                    "=s$size-l90-rw"
                 )
             val hiResUri = if (hiResUrl != originalUrl) hiResUrl.toUri() else uri
             android.util.Log.d("PTUBE_ART", "mapUri 변환: $originalUrl → $hiResUrl")
@@ -126,8 +129,8 @@ class AlbumArtContentProvider : ContentProvider() {
         // 표식(crop=1)을 매핑에 저장해서 openFile 에서 letterbox 대신 center-crop 한다.
         private val cropSet = mutableSetOf<Uri>()
 
-        fun mapUriCrop(uri: Uri): Uri {
-            val contentUri = mapUri(uri)
+        fun mapUriCrop(uri: Uri, size: Int = 1080): Uri {
+            val contentUri = mapUri(uri, size)
             cropSet.add(contentUri)
             return contentUri
         }
