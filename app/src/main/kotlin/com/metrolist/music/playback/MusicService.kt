@@ -3070,6 +3070,26 @@ class MusicService :
             (error.cause as? PlaybackException)?.errorCode == PlaybackException.ERROR_CODE_AUDIO_TRACK_INIT_FAILED
 
     /**
+     * 컨테이너 파싱/디코딩 실패("Source error"). 영상 곡(뮤비)에서, WEB_REMIX가 준
+     * 오디오 URL이 실제 GET에서 403 HTML 본문을 200처럼 반환하면 ExoPlayer가 그것을
+     * mp4로 파싱하다 malformed로 실패한다. 상태코드가 403이 아니라 파싱 에러라 기존
+     * 403 복구 경로가 발동하지 않고 재생이 그냥 멈추던 문제. WEB_REMIX 실패로 표시하고
+     * 재해석하면 폴백 클라이언트가 다른 itag(opus 251 등)를 주므로 대개 살아난다.
+     */
+    private fun isParsingOrDecodingError(error: PlaybackException): Boolean {
+        val codes = setOf(
+            PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED,
+            PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED,
+            PlaybackException.ERROR_CODE_PARSING_MANIFEST_MALFORMED,
+            PlaybackException.ERROR_CODE_PARSING_MANIFEST_UNSUPPORTED,
+            PlaybackException.ERROR_CODE_DECODING_FAILED,
+            PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED,
+        )
+        return error.errorCode in codes ||
+            (error.cause as? PlaybackException)?.errorCode in codes
+    }
+
+    /**
      * Checks if the error is an IO_FILE_NOT_FOUND (ENOENT).
      *
      * In practice this surfaces when the player cache reports a chunk as cached
@@ -3132,6 +3152,14 @@ class MusicService :
 
             isExpiredUrlError(error) -> {
                 Timber.tag(TAG).d("Expired URL (403) detected, refreshing stream URL")
+                handleExpiredUrlError(mediaId)
+                return
+            }
+
+            isParsingOrDecodingError(error) -> {
+                // 영상 곡에서 흔한 "Source error"(파싱/디코딩 실패). 403 복구와 동일하게
+                // WEB_REMIX 실패 표시 후 폴백 클라이언트/포맷으로 재해석해 되살린다.
+                Timber.tag(TAG).d("Parsing/decoding error (Source error) detected, re-resolving with fallback client")
                 handleExpiredUrlError(mediaId)
                 return
             }
