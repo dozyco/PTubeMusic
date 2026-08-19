@@ -70,6 +70,21 @@ object YTPlayerUtils {
         consecutiveValidOriginalUrls.set(0)
     }
 
+    // ── 봇 챌린지 서킷브레이커 ─────────────────────────────────────────────
+    // "Sign in to confirm you're not a bot"은 클라이언트가 아니라 계정/세션 레벨 판정이라
+    // 다른 클라이언트로 재시도해도 소용없고, 요청 폭주(곡당 5~6개 × 재시도)가 오히려
+    // 플래그를 굳힌다. 감지 시 남은 클라이언트를 건너뛰고, 쿨다운 동안 새 해석 요청을
+    // 네트워크 없이 즉시 실패시킨다. 쿨다운이 끝나면 요청 1개로만 다시 프로브한다.
+    private val botChallengeUntilMs = java.util.concurrent.atomic.AtomicLong(0)
+    private const val BOT_CHALLENGE_COOLDOWN_MS = 90_000L
+
+    private fun isBotChallengeReason(reason: String?): Boolean {
+        if (reason == null) return false
+        return reason.contains("not a bot", ignoreCase = true) ||
+            reason.contains("로봇") ||
+            reason.contains("봇이 아님")
+    }
+
     // Fire-and-forget scope for the cipher config self-heal triggered when a cipher client fails
     // stream validation during resolution. Only WEB_REMIX skips HEAD validation (so its bad URL
     // 403s on ExoPlayer and hits MusicService's handler); WEB_CREATOR / TVHTML5 / WEB are validated
@@ -130,6 +145,17 @@ object YTPlayerUtils {
         connectivityManager: ConnectivityManager,
         contentHints: ContentHints = ContentHints(),
     ): Result<PlaybackData> = runCatching {
+        // 봇 챌린지 쿨다운 중이면 네트워크 요청 없이 즉시 실패 (요청 폭주 방지)
+        val botCooldownRemainingMs = botChallengeUntilMs.get() - System.currentTimeMillis()
+        if (botCooldownRemainingMs > 0) {
+            Timber.tag(TAG).w("봇 챌린지 쿨다운 중 (${botCooldownRemainingMs / 1000}s 남음) — 요청 생략: $videoId")
+            throw PlaybackException(
+                "Sign in to confirm you’re not a bot",
+                null,
+                PlaybackException.ERROR_CODE_REMOTE_ERROR,
+            )
+        }
+
         Timber.tag(TAG).d("=== PLAYER RESPONSE FOR PLAYBACK ===")
         Timber.tag(TAG).d("videoId: $videoId")
         Timber.tag(TAG).d("playlistId: $playlistId")
@@ -544,7 +570,15 @@ object YTPlayerUtils {
                     }
                 }
             } else {
-                Timber.tag(logTag).d("Player response status not OK: ${streamPlayerResponse?.playabilityStatus?.status}, reason: ${streamPlayerResponse?.playabilityStatus?.reason}")
+                val failReason = streamPlayerResponse?.playabilityStatus?.reason
+                Timber.tag(logTag).d("Player response status not OK: ${streamPlayerResponse?.playabilityStatus?.status}, reason: $failReason")
+                // 봇 챌린지는 계정/세션 레벨 판정 — 남은 클라이언트를 시도해봐야 전부
+                // 같은 사유로 거부되며 요청만 폭증한다. 즉시 중단하고 쿨다운 설정.
+                if (isBotChallengeReason(failReason)) {
+                    botChallengeUntilMs.set(System.currentTimeMillis() + BOT_CHALLENGE_COOLDOWN_MS)
+                    Timber.tag(TAG).w("봇 챌린지 감지 — 남은 클라이언트 생략, ${BOT_CHALLENGE_COOLDOWN_MS / 1000}s 쿨다운 시작")
+                    break
+                }
             }
         }
 
@@ -641,6 +675,8 @@ object YTPlayerUtils {
             throw Exception("Could not find stream url")
         }
 
+        // 해석 성공 = 봇 챌린지 해제 상태 — 쿨다운이 남아 있었다면 즉시 풀어준다
+        botChallengeUntilMs.set(0)
         Timber.tag(logTag).d("Successfully obtained playback data with format: ${format.mimeType}, bitrate: ${format.bitrate}")
         if (isUploadedTrack) {
             println("[PLAYBACK_DEBUG] SUCCESS: Got playback data for uploaded track - format=${format.mimeType}, streamUrl=${streamUrl.take(100)}...")
